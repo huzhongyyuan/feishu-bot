@@ -1,54 +1,37 @@
-import sqlite3
 import os
+import sqlite3
 
-
-DB="data/events.db"
+DB_PATH = "data/events.db"
 
 
 def init_event_db():
+    os.makedirs("data", exist_ok=True)
 
-    os.makedirs(
-        "data",
-        exist_ok=True
-    )
-
-    conn=sqlite3.connect(DB)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS events(
-        event_id TEXT PRIMARY KEY,
-        created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH, timeout=10) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_events (
+                event_id TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
 
 
+def seen_or_save(event_id):
+    if not event_id:
+        return False
 
-def exists(event_id):
+    with sqlite3.connect(DB_PATH, timeout=10) as conn:
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO processed_events(event_id)
+            VALUES (?)
+            """,
+            (event_id,),
+        )
+        conn.commit()
 
-    conn=sqlite3.connect(DB)
-
-    r=conn.execute(
-        "select event_id from events where event_id=?",
-        (event_id,)
-    ).fetchone()
-
-    conn.close()
-
-    return r is not None
-
-
-
-def save(event_id):
-
-    conn=sqlite3.connect(DB)
-
-    conn.execute(
-        "insert or ignore into events(event_id) values(?)",
-        (event_id,)
-    )
-
-    conn.commit()
-    conn.close()
+        return cursor.rowcount == 0

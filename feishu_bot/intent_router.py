@@ -1,77 +1,121 @@
-from glm_client import call_glm
-import json
+import re
 
 
+def classify_intent(text: str) -> dict:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    lower = normalized.casefold()
 
-def classify_intent(text):
-
-    # ===== 最高优先级：论文推送 =====
-
-    daily_keywords = [
-        "推送论文",
+    daily_words = [
         "推送今天论文",
+        "推送论文",
         "今日论文",
+        "每日论文",
         "论文日报",
-        "推荐今天论文",
-        "最新论文推荐"
     ]
 
-    for k in daily_keywords:
-        if k in text:
-            return {
-                "intent":"paper_daily",
-                "is_paper_related":True,
-                "confidence":1.0,
-                "reason":"daily paper command"
-            }
-
-
-    weekly_keywords = [
-        "总结本周论文",
-        "论文周报",
-        "本周论文",
-        "最近论文总结"
-    ]
-
-    for k in weekly_keywords:
-        if k in text:
-            return {
-                "intent":"paper_weekly",
-                "is_paper_related":True,
-                "confidence":1.0,
-                "reason":"weekly paper command"
-            }
-
-
-    # ===== 第二优先级：论文分析 =====
-
-    analysis_keywords = [
-        "介绍",
-        "分析",
-        "讲一下",
-        "这篇论文",
-        "方法",
-        "贡献",
-        "创新点"
-    ]
-
-
-    if any(k in text for k in analysis_keywords):
-
+    if any(word in normalized for word in daily_words):
         return {
-            "intent":"paper_analysis",
-            "is_paper_related":True,
-            "confidence":1.0,
-            "reason":"paper analysis"
+            "intent": "paper_daily",
+            "is_paper_related": True,
+            "need_search": True,
+            "confidence": 1.0,
         }
 
+    weekly_words = [
+        "本周论文总结",
+        "总结本周论文",
+        "论文周报",
+        "论文月报",
+    ]
 
-    # ===== 普通聊天交给LLM =====
+    if any(word in normalized for word in weekly_words):
+        return {
+            "intent": "paper_weekly",
+            "is_paper_related": True,
+            "need_search": False,
+            "confidence": 1.0,
+        }
+
+    # 在该机器人中，“推荐/调研/有哪些/相关工作”默认指论文。
+    list_words = [
+        "推荐一些",
+        "推荐几篇",
+        "推荐一篇",
+        "有哪些",
+        "相关论文",
+        "相关工作",
+        "文献推荐",
+        "论文推荐",
+        "调研",
+        "研究现状",
+        "研究进展",
+        "最新进展",
+        "技术路线",
+        "survey",
+        "related work",
+        "literature review",
+    ]
+
+    if any(word in lower for word in list_words):
+        return {
+            "intent": "paper_list",
+            "is_paper_related": True,
+            "need_search": True,
+            "confidence": 1.0,
+        }
+
+    if "arxiv.org/" in lower:
+        return {
+            "intent": "paper_analysis",
+            "is_paper_related": True,
+            "need_search": True,
+            "confidence": 1.0,
+        }
+
+    paper_analysis_words = [
+        "这篇论文",
+        "论文贡献",
+        "论文方法",
+        "论文摘要",
+        "论文链接",
+        "论文代码",
+    ]
+
+    if any(word in normalized for word in paper_analysis_words):
+        return {
+            "intent": "paper_analysis",
+            "is_paper_related": True,
+            "need_search": True,
+            "confidence": 1.0,
+        }
+
+    # “介绍 Uni3C”“分析 InfiniteDance”。
+    has_english_name = bool(
+        re.search(r"[A-Za-z][A-Za-z0-9_.+\-]{2,}", normalized)
+    )
+    has_analysis_action = any(
+        word in normalized
+        for word in [
+            "介绍",
+            "分析",
+            "讲一下",
+            "讲讲",
+            "贡献",
+            "创新点",
+        ]
+    )
+
+    if has_english_name and has_analysis_action:
+        return {
+            "intent": "paper_analysis",
+            "is_paper_related": True,
+            "need_search": True,
+            "confidence": 0.98,
+        }
 
     return {
-        "intent":"chat",
-        "is_paper_related":False,
-        "confidence":1.0,
-        "reason":"normal chat"
+        "intent": "chat",
+        "is_paper_related": False,
+        "need_search": False,
+        "confidence": 1.0,
     }
-
