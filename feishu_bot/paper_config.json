@@ -1,0 +1,32 @@
+{
+  "domains": [
+    "数字人生成",
+    "Human Motion Generation",
+    "Motion Generation",
+    "World Model",
+    "Video Generation",
+    "Multimodal Learning",
+    "Animation",
+    "Computer Vision"
+  ],
+  "sources": [
+    "HuggingFace Daily Papers",
+    "arXiv cs.CV",
+    "OpenReview",
+    "Semantic Scholar"
+  ],
+  "daily_count": 4,
+  "min_score": 8.5,
+  "ranking": {
+    "relevance": 0.3,
+    "innovation": 0.25,
+    "technical_depth": 0.2,
+    "experiment_quality": 0.15,
+    "lab_value": 0.1
+  },
+  "output": {
+    "include_paper_url": true,
+    "include_code_url": true,
+    "create_feishu_doc": true
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "papers": [
+    {
+      "title": "Wonder: Video World Model Done Better",
+      "venue": "arXiv",
+      "summary": "The paper presents Wonder, a general-purpose video world model that enables real-time, camera-controllable exploration of a playable world generated from a single image or conditional video. By co-designing control methods, memory mechanisms, and training strategies, Wonder allows users to navigate, discover unseen regions, and revisit areas over long-term horizons. It synthesizes diverse, minute-scale videos at 16 FPS while maintaining coherent geometry, appearance, and dynamics.",
+      "contributions": [
+        "Introduced a novel camera conditioning approach using a dense coordinate field to provide spatially aligned motion and orientation cues, allowing the model to interpret camera motion directly as visual evidence.",
+        "Proposed an efficient sparse attention-based memory mechanism that enables fast and precise memory retrieval by selectively attending to relevant context tokens, independent of the actual context length.",
+        "Developed techniques to rectify the self-forcing-style distillation pipeline, improving the student model's adherence to control signals while preserving diverse generation modes and long-term memory from the teacher model.",
+        "Achieved real-time synthesis of diverse, minute-scale long-rollout videos at 16 FPS with coherent geometry and dynamics, and extended the capability to support video-conditioned generation for re-shooting existing dynamic scenes."
+      ],
+      "score": 90,
+      "paper_url": "https://arxiv.org/abs/2607.26037v1",
+      "code_url": "",
+      "reason": "论文提出了一种通用的视频世界模型，直接命中实验室关注的'World Model'和'Video Generation'方向。该工作在单图/视频生成实时、相机可控且长时间一致的可玩世界方面具有显著创新性。其协同设计的控制方法、记忆机制和训练策略展现了较高的技术深度，且对实验室在视频生成、世界模型及相关数字人交互场景的研究具有重要参考价值。",
+      "keep": true,
+      "push_time": "2026-07-29"
+    },
+    {
+      "title": "Parallel Decoding Distillation for Fast Image and Video Generation",
+      "venue": "arXiv (Preprint)",
+      "summary": "该论文提出了一种名为并行解码蒸馏（PDD）的简化且可扩展的轨迹蒸馏方法，用于加速图像和视频扩散/流匹配模型的推理过程。针对现有基于变分分数蒸馏（VSD）和对抗损失的方法存在难以优化、易引发模式崩溃及导致视频多样性和动态感缺失等问题，PDD通过单次网络评估预测多个去噪步骤来实现加速。该方法直接学习平均速度的表示，无需使用雅可比向量积（JVP）或有限差分近似来回归其导数。PDD不仅兼容任何预训练模型，还支持可变数量的函数评估（NFE）。实验表明，该方法在LTX-2.3、Wan 14B和Qwen-Image等大规模模型上仅需4-8次NFE即可达到SOTA性能，并显著提升了生成视频的多样性。",
+      "contributions": [
+        "提出了并行解码蒸馏（PDD），一种简化且可扩展的基于轨迹的蒸馏方法，避免了难以优化的VSD和对抗损失，有效解决了现有加速方法中的模式崩溃和视频动态缺失问题。",
+        "设计了一种兼容任意预训练模型的架构和训练流程，支持可变数量的函数评估（NFE）。通过单次网络评估预测多个去噪步骤，且无需使用JVP或有限差分近似来回归导数，直接学习平均速度的表示。",
+        "在LTX-2.3（文生视频/音频）、Wan 14B（文生视频）和Qwen-Image（文生图像）等多个大规模模型上，仅需4-8次NFE即达到了SOTA性能，同时在生成视频的多样性方面取得了显著提升。"
+      ],
+      "score": 9,
+      "paper_url": "https://arxiv.org/abs/2607.26004v1",
+      "code_url": "",
+      "reason": "该论文提出并行解码蒸馏（PDD）方法加速图像和视频扩散/流匹配模型推理，与实验室的Video Generation及Computer Vision方向高度相关。方法在技术上具有较好的创新性和深度，通过单次网络评估预测多步去噪并直接学习平均速度表示，有效规避了VSD方法的优化困难和模式崩溃问题，显著提升了视频生成多样性与动态感。实验在Wan 14B、LTX-2.3等大规模模型上以极少步数（4-8 NFE）达到SOTA，可信度高。推理加速对实验室的数字人生成和视频生成项目具有极高的实际应用价值。",
+      "keep": true,
+      "push_time": "2026-07-29"
+    },
+    {
+      "title": "Parallel Decoding Distillation for Fast Image and Video Generation",
+      "venue": "arXiv preprint",
+      "summary": "该论文提出了一种名为并行解码蒸馏（PDD）的简化且可扩展的基于轨迹的蒸馏方法，用于加速图像和视频扩散及流匹配模型的推理。针对当前基于变分分数蒸馏（VSD）和对抗损失的方法存在的难以优化、易模式崩溃以及视频多样性丧失等问题，PDD通过每次网络评估预测多个去噪步骤来实现加速，并学习平均速度的表示，而无需使用JVP或有限差分近似来回归其导数。实验证明，PDD在LTX-2.3、Wan 14B和Qwen-Image等模型上仅需4-8次网络前向传播（NFE）即可达到SOTA性能，同时显著提升了生成视频的多样性。",
+      "contributions": [
+        "提出Parallel Decoding Distillation (PDD)，一种简化且可扩展的基于轨迹的蒸馏方法，兼容任意预训练模型并支持可变数量的网络前向传播（NFE）采样。",
+        "通过单次网络评估预测多个去噪步骤来加速生成过程，并创新性地学习平均速度的表示，避免了使用JVPs或有限差分近似进行导数回归。",
+        "有效解决了现有VSD和对抗损失方法难以优化及易模式崩溃的问题，显著改善了生成视频的多样性和动态效果。",
+        "在LTX-2.3 Text-to-Video/Audio、Wan 14B Text-to-Video和Qwen-Image Text-to-Image等多个大规模模型上，仅用4-8 NFE即实现了SOTA性能。"
+      ],
+      "score": 88,
+      "paper_url": "https://arxiv.org/abs/2607.26004v1",
+      "code_url": "",
+      "reason": "论文提出的并行解码蒸馏（PDD）方法专注于加速图像和视频扩散/流匹配模型的推理，与实验室关注的Video Generation和Computer Vision方向高度相关。该工作针对现有VSD等方法在视频生成中面临的模式崩溃和多样性丧失问题，创新性地提出无需JVP或有限差分近似的轨迹蒸馏方案，技术深度较高。实验在LTX-2.3、Wan 14B等大型模型上以极少的NFE达到SOTA并提升多样性，可信度强，对实验室在视频生成及多模态学习领域的效率优化项目具有极高的应用价值。",
+      "keep": true,
+      "push_time": "2026-07-29"
+    }
+  ]
+}

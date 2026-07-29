@@ -21,3 +21,13 @@ venv/
 
 # system
 .DS_Store
+
+# backups
+*.bak
+*.bak_*
+*.bak.*
+*.bak[0-9]
+*.bak[0-9][a-z]*
+
+# data
+*.db
