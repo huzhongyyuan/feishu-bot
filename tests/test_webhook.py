@@ -17,6 +17,15 @@ import main  # noqa: E402
 
 class WebhookTests(unittest.TestCase):
     def setUp(self):
+        self.env_patch = patch.dict(
+            os.environ,
+            {
+                "FEISHU_VERIFICATION_TOKEN": "",
+                "FEISHU_ALLOWED_OPEN_IDS": "",
+            },
+        )
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
         self.client = TestClient(main.app)
 
     def test_health(self):
