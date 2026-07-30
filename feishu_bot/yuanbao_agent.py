@@ -14,21 +14,39 @@ from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 _SECTION_RE = re.compile(r"^[一二三四五六七八九十]+、")
+_EMOJI_SECTION_RE = re.compile(
+    r"^[🧠🏢💰📜🔬💡🚀📌📰⚙️🛡️📚🎯]"
+)
 _BULLET_ONLY = {"•", "·", "-", "–", "—"}
 _NUMBER_ONLY_RE = re.compile(r"^\d+[.)、]$")
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
 
 
 def _format_answer(text: str) -> str:
     """Make Yuanbao's visual layout readable in a plain Feishu message."""
     result: list[str] = []
     pending_prefix = ""
+    bullet_number = 0
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
+        if line in {"Related Videos", "相关视频"}:
+            break
+
+        line = _MARKDOWN_LINK_RE.sub(
+            lambda match: (
+                match.group(2)
+                if match.group(1) == match.group(2)
+                else f"{match.group(1)}\n   {match.group(2)}"
+            ),
+            line,
+        )
+
         if line in _BULLET_ONLY:
-            pending_prefix = "•"
+            bullet_number += 1
+            pending_prefix = f"{bullet_number}."
             continue
         if _NUMBER_ONLY_RE.match(line):
             pending_prefix = line
@@ -38,12 +56,19 @@ def _format_answer(text: str) -> str:
             line = f"{pending_prefix} {line}"
             pending_prefix = ""
         elif line.startswith(("•", "·")):
-            line = f"• {line[1:].strip()}"
+            bullet_number += 1
+            line = f"{bullet_number}. {line[1:].strip()}"
 
-        if _SECTION_RE.match(line):
+        is_section = (
+            _SECTION_RE.match(line)
+            or _EMOJI_SECTION_RE.match(line)
+            or line in {"参考链接", "参考资料", "来源"}
+        )
+        if is_section:
             if result and result[-1] != "":
                 result.append("")
             result.extend((line, ""))
+            bullet_number = 0
         else:
             result.append(line)
 

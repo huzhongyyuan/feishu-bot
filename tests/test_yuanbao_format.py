@@ -23,7 +23,7 @@ class YuanbaoFormatTests(unittest.TestCase):
         self.assertEqual(
             _format_answer(source),
             "开场\n\n一、模型与开源\n\n"
-            "• 第一条\n• 第二条\n\n"
+            "1. 第一条\n2. 第二条\n\n"
             "二、大厂动态\n\n内容",
         )
 
@@ -68,6 +68,30 @@ class YuanbaoFormatTests(unittest.TestCase):
         self.assertTrue(prompt.startswith("介绍一下"))
         self.assertIn("https://", prompt)
         self.assertIn("不要输出思考过程", prompt)
+
+    def test_formats_emoji_sections_links_and_removes_related_videos(self):
+        source = """🧠 模型进展
+•
+第一条
+•
+第二条
+参考链接
+•
+官网：[https://example.com](https://example.com)
+•
+报道：[新闻](https://example.com/news)
+Related Videos
+不应保留"""
+
+        self.assertEqual(
+            _format_answer(source),
+            "🧠 模型进展\n\n"
+            "1. 第一条\n"
+            "2. 第二条\n\n"
+            "参考链接\n\n"
+            "1. 官网：https://example.com\n"
+            "2. 报道：新闻\n   https://example.com/news",
+        )
 
 
 if __name__ == "__main__":
