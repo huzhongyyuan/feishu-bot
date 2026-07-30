@@ -141,10 +141,13 @@ def _wait_for_answer(page) -> str:
 def _final_answer_text(page) -> str:
     """Read the final answer while excluding DeepSeek's private thinking UI."""
     blocks = page.eval_on_selector_all(
-        ".agent-chat__list__item--ai .hyc-content-md",
+        ".agent-chat__list__item--ai .hyc-common-markdown",
         """elements => elements
             .filter(element =>
                 !element.closest('.hyc-component-deepsearch-cot')
+                && !element.className.includes(
+                    'hyc-common-markdown-style-cot'
+                )
             )
             .map(element => (element.innerText || '').trim())
             .filter(Boolean)""",
