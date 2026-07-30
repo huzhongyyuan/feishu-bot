@@ -1,7 +1,9 @@
 import os
+import re
 import threading
 import time
-from urllib.parse import urlparse
+from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -10,6 +12,17 @@ from playwright.sync_api import sync_playwright
 _REQUEST_LOCK = threading.Lock()
 _ASSISTANT_SELECTOR = '[data-message-author-role="assistant"]'
 _COMPOSER_SELECTOR = "#prompt-textarea, textarea, [contenteditable=true]"
+_CITATION_NOISE = re.compile(
+    r"^(?:\+\d+|X \(formerly Twitter\)|AI IDE List)$",
+    re.IGNORECASE,
+)
+_SECTION_HEADING = re.compile(
+    r"^(?:#{1,6}\s*)?(?:"
+    r"\d+[.、]\s*|"
+    r"[一二三四五六七八九十]+[、.]\s*|"
+    r"[\U0001F300-\U0001FAFF]"
+    r")"
+)
 
 
 class ChatGPTWebError(RuntimeError):
@@ -36,15 +49,123 @@ def _visible_composer(page):
     raise ChatGPTWebError("未找到 ChatGPT 输入框，请检查登录状态。")
 
 
+def _clean_url(url: str) -> str:
+    parsed = urlparse(url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+    ]
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
 def _unique_links(turn) -> list[str]:
     links = []
     for href in turn.locator("a[href]").evaluate_all(
         "elements => elements.map(element => element.href)"
     ):
         parsed = urlparse(str(href))
-        if parsed.scheme in {"http", "https"} and href not in links:
-            links.append(href)
+        cleaned = _clean_url(str(href))
+        if parsed.scheme in {"http", "https"} and cleaned not in links:
+            links.append(cleaned)
     return links
+
+
+def _format_table(lines: list[str], start: int) -> tuple[list[str], int]:
+    rows = []
+    index = start
+    while index < len(lines) and "\t" in lines[index]:
+        columns = [item.strip() for item in lines[index].split("\t")]
+        if len(columns) < 2:
+            break
+        rows.append(columns)
+        index += 1
+
+    if len(rows) < 2:
+        return [lines[start]], start + 1
+
+    headers = rows[0]
+    formatted = []
+    for number, row in enumerate(rows[1:], start=1):
+        formatted.append(f"{number}. {row[0]}")
+        for column_index, value in enumerate(row[1:], start=1):
+            if not value:
+                continue
+            label = (
+                headers[column_index]
+                if column_index < len(headers)
+                else f"信息{column_index}"
+            )
+            formatted.append(f"   {label}：{value}")
+    return formatted, index
+
+
+def format_chatgpt_answer(
+    text: str,
+    links: Optional[list[str]] = None,
+) -> str:
+    raw_lines = [
+        line.replace("\u00a0", " ").strip()
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    ]
+    lines = [
+        re.sub(r"^•\s*", "- ", line)
+        for line in raw_lines
+        if line and not _CITATION_NOISE.fullmatch(line)
+    ]
+
+    compact = []
+    index = 0
+    while index < len(lines):
+        if "\t" in lines[index]:
+            table_lines, index = _format_table(lines, index)
+            compact.extend(table_lines)
+            continue
+        compact.append(lines[index])
+        index += 1
+
+    visible_links = []
+    body_lines = []
+    for line in compact:
+        if re.fullmatch(r"https?://\S+", line):
+            cleaned = _clean_url(line)
+            if cleaned not in visible_links:
+                visible_links.append(cleaned)
+            continue
+        body_lines.append(line)
+
+    for link in links or []:
+        cleaned = _clean_url(link)
+        if cleaned not in visible_links:
+            visible_links.append(cleaned)
+
+    output = []
+    for line in body_lines:
+        is_heading = (
+            bool(_SECTION_HEADING.match(line))
+            or line.rstrip("：:") in {"参考链接", "参考资料", "来源"}
+            or line.endswith(("趋势", "影响", "方向"))
+        )
+        if is_heading and output and output[-1] != "":
+            output.append("")
+        output.append(line)
+
+    if visible_links:
+        if output and output[-1] != "":
+            output.append("")
+        if not output or output[-1] != "参考链接":
+            output.append("参考链接")
+        output.extend(visible_links)
+
+    formatted = "\n".join(output).strip()
+    formatted = re.sub(r"\n{3,}", "\n\n", formatted)
+    max_chars = max(
+        1000,
+        int(os.getenv("CHATGPT_MAX_ANSWER_CHARS", "12000")),
+    )
+    if len(formatted) > max_chars:
+        formatted = formatted[: max_chars - 12].rstrip() + "\n\n[内容已截断]"
+    return formatted
 
 
 def _wait_for_answer(page, previous_count: int, timeout_seconds: int) -> str:
@@ -69,10 +190,7 @@ def _wait_for_answer(page, previous_count: int, timeout_seconds: int) -> str:
 
             if stable_samples >= 3:
                 links = _unique_links(turn)
-                missing_links = [url for url in links if url not in text]
-                if missing_links:
-                    text += "\n\n参考链接\n" + "\n".join(missing_links)
-                return text
+                return format_chatgpt_answer(text, links)
 
         page.wait_for_timeout(1000)
 

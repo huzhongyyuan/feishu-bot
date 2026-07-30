@@ -5,6 +5,7 @@
 
 # browser login state
 *_state.json
+/state/
 
 # logs
 *.log
