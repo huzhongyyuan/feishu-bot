@@ -184,7 +184,7 @@ def _configure_model(page) -> tuple[str, bool]:
                     .includes('ThinkSelector_selected');
                 return selected === enabled;
             }""",
-            deep_thinking,
+            arg=deep_thinking,
             timeout=15_000,
         )
 
