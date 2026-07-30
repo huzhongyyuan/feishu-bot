@@ -1,13 +1,13 @@
 import os
 import json
 import time
-import requests
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 import lark_oapi as lark
 
 from intent_router import classify_intent
 from event_db import init_event_db, seen_or_save
+from glm_client import call_glm
 
 
 load_dotenv()
@@ -17,39 +17,6 @@ app = FastAPI()
 SERVICE_START_TIME = time.time()
 init_event_db()
 
-
-
-
-ZAI_API_KEY = os.getenv("ZAI_API_KEY")
-
-
-def call_glm(text):
-
-    r = requests.post(
-        "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-        headers={
-            "Content-Type":"application/json",
-            "Authorization":f"Bearer {ZAI_API_KEY}"
-        },
-        json={
-            "model":"glm-4.5",
-            "messages":[
-                {
-                    "role":"user",
-                    "content":text
-                }
-            ]
-        },
-        timeout=120
-    )
-
-    data = r.json()
-
-    return (
-        data["choices"][0]
-        ["message"]
-        ["content"]
-    )
 
 
 
@@ -624,4 +591,12 @@ def home():
 
     return {
         "status":"running"
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - SERVICE_START_TIME, 1),
     }

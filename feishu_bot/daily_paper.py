@@ -1,4 +1,5 @@
-from main import send_feishu_message, call_glm
+from feishu_sender import send_message as send_feishu_message
+from glm_client import call_glm
 from paper_db import init_db, paper_exists, save_paper
 from paper_ranker import filter_papers
 from dotenv import load_dotenv

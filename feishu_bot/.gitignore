@@ -31,3 +31,4 @@ venv/
 
 # data
 *.db
+*.db-*

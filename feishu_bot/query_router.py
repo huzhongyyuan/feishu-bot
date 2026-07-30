@@ -1,4 +1,4 @@
-from main import call_glm
+from glm_client import call_glm
 import json
 
 

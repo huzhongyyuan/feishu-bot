@@ -120,6 +120,7 @@
 **/.cache/
 **/tmp/
 **/temp/
+.tools/
 
 # Dart
 **/.dart_tool/
