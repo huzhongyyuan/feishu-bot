@@ -415,10 +415,14 @@ def _clean_message_text(message: dict) -> str:
     )
 
 
+def _is_yuanbao_request(text: str) -> bool:
+    return "元宝" in text
+
+
 def _chat_answer(text: str) -> str:
     provider = os.getenv("CHAT_PROVIDER", "auto").strip().lower()
     yuanbao_prefixes = ("问元宝", "元宝：", "元宝:")
-    explicit_yuanbao = text.startswith(yuanbao_prefixes)
+    explicit_yuanbao = _is_yuanbao_request(text)
     question = text
 
     if explicit_yuanbao:
@@ -463,6 +467,8 @@ def process_message(chat_id: str, text: str) -> None:
     try:
         send_text_message(chat_id, "⏳ 已收到请求，正在处理中...")
         intent = classify_intent(text)
+        if _is_yuanbao_request(text):
+            intent = {"intent": "chat"}
         logger.info("处理消息 chat_id=%s intent=%s", chat_id, intent["intent"])
 
         if intent["intent"] == "paper_list":

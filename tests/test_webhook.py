@@ -24,6 +24,11 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
 
+    def test_yuanbao_keyword_routes_from_any_position(self):
+        self.assertTrue(main._is_yuanbao_request("请让元宝总结一下"))
+        self.assertTrue(main._is_yuanbao_request("今天的新闻，交给元宝"))
+        self.assertFalse(main._is_yuanbao_request("请普通总结一下"))
+
     def test_url_verification(self):
         response = self.client.post(
             "/webhook",
