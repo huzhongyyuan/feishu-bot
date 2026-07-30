@@ -5,11 +5,21 @@ The production checkout is expected at `/workspace`, with the application in
 
 ## API service
 
+On a systemd host:
+
 ```bash
 cp deploy/systemd/feishu-bot.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now feishu-bot.service
 curl --fail http://127.0.0.1:8000/health
+```
+
+On the Firecracker container used by the current server, PID 1 is not systemd.
+Install the health watchdog in root's crontab instead:
+
+```bash
+chmod +x /workspace/deploy/feishu-watchdog.sh
+(crontab -l 2>/dev/null; echo '* * * * * /workspace/deploy/feishu-watchdog.sh >> /workspace/watchdog.log 2>&1') | crontab -
 ```
 
 ## Yuanbao
