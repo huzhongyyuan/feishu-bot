@@ -40,6 +40,19 @@ browser runtime with:
 Ask it from Feishu with `问元宝 <问题>` or `元宝：<问题>`. If Yuanbao is unavailable,
 the bot automatically falls back to GLM.
 
+Every request explicitly selects and verifies DeepSeek with deep thinking by
+default. Override these settings only when needed:
+
+```dotenv
+YUANBAO_MODEL=deepseek
+YUANBAO_DEEP_THINKING=true
+YUANBAO_ANSWER_TIMEOUT_SECONDS=90
+YUANBAO_MAX_ANSWER_CHARS=12000
+```
+
+The response extractor waits for streaming output to stabilize, formats
+sections and bullet lists for Feishu, and appends newly generated source links.
+
 ## Daily scheduler
 
 Set `FEISHU_CHAT_ID` before enabling the scheduler:

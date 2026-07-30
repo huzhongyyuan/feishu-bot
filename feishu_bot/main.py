@@ -448,7 +448,15 @@ def _chat_answer(text: str) -> str:
             + glm_answer
         )
 
-    return "【元宝】\n" + yuanbao_answer
+    model = os.getenv("YUANBAO_MODEL", "deepseek").strip().lower()
+    model_label = "DeepSeek" if model in {"deepseek", "deep_seek"} else "混元"
+    deep_label = (
+        " · 深度思考"
+        if os.getenv("YUANBAO_DEEP_THINKING", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+        else ""
+    )
+    return f"【元宝 · {model_label}{deep_label}】\n\n{yuanbao_answer}"
 
 
 def process_message(chat_id: str, text: str) -> None:
