@@ -144,8 +144,7 @@ def _final_answer_text(page) -> str:
         ".agent-chat__list__item--ai .hyc-common-markdown",
         """elements => elements
             .filter(element =>
-                !element.closest('.hyc-component-deepsearch-cot')
-                && !element.className.includes(
+                !element.className.includes(
                     'hyc-common-markdown-style-cot'
                 )
             )
