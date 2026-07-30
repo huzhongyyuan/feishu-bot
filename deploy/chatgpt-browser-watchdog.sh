@@ -36,7 +36,7 @@ if ! pgrep -f "^x11vnc -display ${DISPLAY_NUMBER} " >/dev/null; then
         > /workspace/chatgpt-x11vnc.log 2>&1 &
 fi
 
-if ! pgrep -f "^websockify .*127\\.0\\.0\\.1:6080 " >/dev/null; then
+if ! pgrep -f "websockify .*127\\.0\\.0\\.1:6080 " >/dev/null; then
     nohup websockify \
         --web "${NOVNC_WEB_ROOT}" \
         127.0.0.1:6080 \
