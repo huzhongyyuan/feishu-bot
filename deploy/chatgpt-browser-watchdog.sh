@@ -47,6 +47,8 @@ fi
 if ! pgrep -f "^${CHROMIUM_BIN} .*--user-data-dir=${PROFILE_DIR}" >/dev/null; then
     nohup "${CHROMIUM_BIN}" \
         --no-sandbox \
+        --no-first-run \
+        --no-default-browser-check \
         --disable-dev-shm-usage \
         --disable-gpu \
         --proxy-server=http://127.0.0.1:7890 \
