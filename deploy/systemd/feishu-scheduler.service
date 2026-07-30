@@ -1,0 +1,18 @@
+[Unit]
+Description=Feishu Bot Daily Paper Scheduler
+After=network-online.target feishu-bot.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/workspace/feishu_bot
+EnvironmentFile=/workspace/feishu_bot/.env
+ExecStart=/workspace/.venv/bin/python scheduler.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

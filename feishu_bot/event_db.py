@@ -1,11 +1,14 @@
 import os
 import sqlite3
+from pathlib import Path
 
-DB_PATH = "data/events.db"
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = Path(os.getenv("EVENT_DB_PATH", BASE_DIR / "data" / "events.db"))
+EVENT_RETENTION_DAYS = int(os.getenv("EVENT_RETENTION_DAYS", "30"))
 
 
 def init_event_db():
-    os.makedirs("data", exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(DB_PATH, timeout=10) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -16,6 +19,13 @@ def init_event_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+        conn.execute(
+            """
+            DELETE FROM processed_events
+            WHERE created_at < datetime('now', ?)
+            """,
+            (f"-{EVENT_RETENTION_DAYS} days",),
         )
         conn.commit()
 

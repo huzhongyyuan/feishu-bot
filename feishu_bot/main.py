@@ -1,7 +1,9 @@
 import os
 import json
+import logging
+import secrets
 import time
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from dotenv import load_dotenv
 import lark_oapi as lark
 
@@ -12,11 +14,29 @@ from glm_client import call_glm
 
 load_dotenv()
 
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("feishu_bot")
 
 app = FastAPI()
 SERVICE_START_TIME = time.time()
 init_event_db()
 
+REQUIRED_CONFIG = (
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
+    "ZAI_API_KEY",
+)
+missing_config = [key for key in REQUIRED_CONFIG if not os.getenv(key)]
+if missing_config:
+    raise RuntimeError("缺少必要配置：" + ", ".join(missing_config))
+
+if not os.getenv("FEISHU_VERIFICATION_TOKEN"):
+    logger.warning(
+        "未配置 FEISHU_VERIFICATION_TOKEN；Webhook 暂时只依赖随机公网地址保护"
+    )
 
 
 
@@ -32,6 +52,13 @@ def get_client():
         )
         .build()
     )
+
+
+def _ensure_lark_success(response, action: str) -> None:
+    if hasattr(response, "success") and not response.success():
+        code = getattr(response, "code", "unknown")
+        msg = getattr(response, "msg", "unknown")
+        raise RuntimeError(f"{action}失败：code={code}, msg={msg}")
 
 
 
@@ -59,7 +86,8 @@ def send_text_message(chat_id,text):
         .build()
     )
 
-    client.im.v1.message.create(req)
+    response = client.im.v1.message.create(req)
+    _ensure_lark_success(response, "发送飞书文本消息")
 
 
 
@@ -349,240 +377,205 @@ def send_card(chat_id, data):
     )
 
     response = client.im.v1.message.create(req)
+    _ensure_lark_success(response, "发送飞书论文卡片")
 
-    print(
-        "[飞书论文卡片返回]",
-        response,
-        flush=True
+    logger.info("飞书论文卡片发送成功 chat_id=%s", chat_id)
+
+
+def _verify_webhook_token(data: dict) -> None:
+    expected = os.getenv("FEISHU_VERIFICATION_TOKEN")
+    if not expected:
+        return
+
+    received = str(
+        data.get("token")
+        or data.get("header", {}).get("token")
+        or ""
     )
+    if not secrets.compare_digest(received, expected):
+        raise HTTPException(status_code=403, detail="invalid verification token")
+
+
+def _clean_message_text(message: dict) -> str:
+    try:
+        content = json.loads(message.get("content") or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("飞书文本消息 content 不是合法 JSON") from exc
+
+    text = str(content.get("text") or "")
+    for mention in message.get("mentions") or []:
+        key = mention.get("key")
+        if key:
+            text = text.replace(key, " ")
+
+    return (
+        text.replace("@_user_1", " ")
+        .replace("@HumanGroupBot", " ")
+        .strip()
+    )
+
+
+def _chat_answer(text: str) -> str:
+    provider = os.getenv("CHAT_PROVIDER", "auto").strip().lower()
+    yuanbao_prefixes = ("问元宝", "元宝：", "元宝:")
+    explicit_yuanbao = text.startswith(yuanbao_prefixes)
+    question = text
+
+    if explicit_yuanbao:
+        for prefix in yuanbao_prefixes:
+            if question.startswith(prefix):
+                question = question[len(prefix):].strip()
+                break
+
+    use_yuanbao = provider in {"yuanbao", "both"} or explicit_yuanbao
+    if not use_yuanbao:
+        return call_glm(question)
+
+    try:
+        from yuanbao_agent import ask_yuanbao
+
+        yuanbao_answer = ask_yuanbao(question)
+    except Exception:
+        logger.exception("元宝调用失败，回退 GLM")
+        return "元宝暂时不可用，已切换 GLM：\n\n" + call_glm(question)
+
+    if provider == "both" and not explicit_yuanbao:
+        glm_answer = call_glm(question)
+        return (
+            "【元宝】\n"
+            + yuanbao_answer
+            + "\n\n【GLM】\n"
+            + glm_answer
+        )
+
+    return "【元宝】\n" + yuanbao_answer
+
+
+def process_message(chat_id: str, text: str) -> None:
+    try:
+        send_text_message(chat_id, "⏳ 已收到请求，正在处理中...")
+        intent = classify_intent(text)
+        logger.info("处理消息 chat_id=%s intent=%s", chat_id, intent["intent"])
+
+        if intent["intent"] == "paper_list":
+            from paper_agent import analyze_paper
+            from paper_list_agent import search_topic_papers
+
+            papers = search_topic_papers(text, limit=4)
+            if not papers:
+                send_text_message(
+                    chat_id,
+                    "没有检索到相关 arXiv 论文，请换一个更明确的研究主题。",
+                )
+                return
+
+            send_text_message(
+                chat_id,
+                f"检索到 {len(papers)} 篇相关 arXiv 论文，正在生成卡片…",
+            )
+            for paper in papers:
+                try:
+                    result = analyze_paper(paper)
+                    result["abstract"] = ""
+                    result["paper_url"] = (
+                        paper.get("paper_url")
+                        or paper.get("url")
+                        or result.get("paper_url", "")
+                    )
+                    send_card(chat_id, result)
+                except Exception:
+                    logger.exception("论文列表单篇分析失败")
+            return
+
+        if intent["intent"] == "paper_analysis":
+            from paper_agent import analyze_paper
+            from paper_search import search_arxiv
+
+            papers = search_arxiv(text)
+            if papers:
+                send_card(chat_id, analyze_paper(papers[0]))
+            else:
+                send_text_message(chat_id, "没有找到相关论文")
+            return
+
+        if intent["intent"] == "paper_daily":
+            from daily_paper import daily_push
+
+            if not os.getenv("FEISHU_CHAT_ID"):
+                send_text_message(
+                    chat_id,
+                    "每日主动推送尚未配置 FEISHU_CHAT_ID。",
+                )
+                return
+            daily_push()
+            return
+
+        send_text_message(chat_id, _chat_answer(text))
+    except Exception:
+        logger.exception("后台消息处理失败 chat_id=%s", chat_id)
+        try:
+            send_text_message(chat_id, "处理失败，请稍后重试或联系管理员查看日志。")
+        except Exception:
+            logger.exception("发送失败提示也失败 chat_id=%s", chat_id)
 
 
 @app.post("/webhook")
-async def webhook(request:Request):
+async def webhook(request: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from exc
 
-    data=await request.json()
+    _verify_webhook_token(data)
 
+    if data.get("type") == "url_verification":
+        challenge = data.get("challenge")
+        if not challenge:
+            raise HTTPException(status_code=400, detail="missing challenge")
+        return {"challenge": challenge}
 
-    if data.get("type")=="url_verification":
-
-        return {
-            "challenge":data["challenge"]
-        }
-
-
-
-    header=data.get("header",{})
+    header = data.get("header") or {}
+    if header.get("event_type") != "im.message.receive_v1":
+        return {"code": 0}
 
     event_id = header.get("event_id", "")
-
     if event_id and seen_or_save(event_id):
-        print("忽略重复事件:", event_id, flush=True)
-        return {
-            "code": 0
-        }
+        logger.info("忽略重复事件 event_id=%s", event_id)
+        return {"code": 0}
 
-    if header.get(
-        "event_type"
-    )!="im.message.receive_v1":
-
-        return {
-            "code":0
-        }
-
-
-
-    event=data["event"]
-
-    message=event["message"]
-
-    # 忽略机器人或应用自身消息
-    sender_type = event.get("sender", {}).get("sender_type", "")
+    event = data.get("event") or {}
+    message = event.get("message") or {}
+    sender_type = (event.get("sender") or {}).get("sender_type", "")
     if sender_type in {"bot", "app"}:
-        print("忽略非用户消息:", sender_type, flush=True)
-        return {
-            "code": 0
-        }
+        return {"code": 0}
 
-    # 只处理文本消息
     if message.get("message_type") != "text":
-        print("忽略非文本消息", flush=True)
-        return {
-            "code": 0
-        }
+        return {"code": 0}
 
-    # 忽略重启后重新投递的历史消息
-    create_time = message.get("create_time", "0")
     try:
-        message_time = int(create_time) / 1000
+        message_time = int(message.get("create_time", "0")) / 1000
     except (TypeError, ValueError):
         message_time = 0
-
-    # 只处理本次服务启动之后产生的新消息
     if message_time < SERVICE_START_TIME - 3:
-        print("忽略服务启动前的历史消息:", create_time, flush=True)
-        return {
-            "code": 0
-        }
-
-
+        logger.info("忽略服务启动前的历史消息 create_time=%s", message.get("create_time"))
+        return {"code": 0}
 
     if not message.get("mentions"):
+        return {"code": 0}
 
-        return {
-            "code":0
-        }
+    chat_id = message.get("chat_id")
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="missing chat_id")
 
+    try:
+        text = _clean_message_text(message)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not text:
+        return {"code": 0}
 
-
-    chat_id=message["chat_id"]
-
-
-    content=json.loads(
-        message["content"]
-    )
-
-    text=content.get(
-        "text",
-        ""
-    )
-
-
-    text=text.replace(
-        "@_user_1",
-        ""
-    )
-
-    text=text.replace(
-        "@HumanGroupBot",
-        ""
-    ).strip()
-
-
-
-    send_text_message(
-        chat_id,
-        "⏳ 已收到请求，正在处理中..."
-    )
-
-
-    intent=classify_intent(text)
-
-
-    print(
-        "INTENT:",
-        intent,
-        flush=True
-    )
-
-
-    if intent["intent"]=="paper_list":
-
-        from paper_list_agent import search_topic_papers
-        from paper_agent import analyze_paper
-
-        papers = search_topic_papers(
-            text,
-            limit=4
-        )
-
-        if not papers:
-            send_text_message(
-                chat_id,
-                "没有检索到相关 arXiv 论文，请换一个更明确的研究主题。"
-            )
-            return {
-                "code": 0
-            }
-
-        send_text_message(
-            chat_id,
-            f"检索到 {len(papers)} 篇相关 arXiv 论文，正在生成卡片…"
-        )
-
-        for paper in papers:
-            try:
-                result = analyze_paper(paper)
-
-                # 多论文推荐使用紧凑卡片，避免全文摘要占满群聊
-                result["abstract"] = ""
-                result["paper_url"] = (
-                    paper.get("paper_url")
-                    or paper.get("url")
-                    or result.get("paper_url", "")
-                )
-
-                send_card(
-                    chat_id,
-                    result
-                )
-
-            except Exception as exc:
-                print("[PAPER LIST] analyze failed:", exc, flush=True)
-
-        return {
-            "code": 0
-        }
-
-
-    if intent["intent"]=="paper_analysis":
-
-        from paper_search import search_arxiv
-        from paper_agent import analyze_paper
-
-
-        papers=search_arxiv(
-            text
-        )
-
-
-        if papers:
-
-            result=analyze_paper(
-                papers[0]
-            )
-
-            send_card(
-                chat_id,
-                result
-            )
-
-        else:
-
-            send_text_message(
-                chat_id,
-                "没有找到相关论文"
-            )
-
-
-        return {
-            "code":0
-        }
-
-
-
-    if intent["intent"]=="paper_daily":
-
-        from daily_paper import daily_push
-
-        daily_push()
-
-        return {
-            "code":0
-        }
-
-
-
-    answer=call_glm(text)
-
-    send_text_message(
-        chat_id,
-        answer
-    )
-
-
-    return {
-        "code":0
-    }
+    background_tasks.add_task(process_message, chat_id, text)
+    return {"code": 0}
 
 
 
