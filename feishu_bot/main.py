@@ -419,10 +419,37 @@ def _is_yuanbao_request(text: str) -> bool:
     return "元宝" in text
 
 
+def _is_chatgpt_request(text: str) -> bool:
+    return "gpt" in text.lower()
+
+
+def _strip_chatgpt_command(text: str) -> str:
+    prefixes = (
+        "问ChatGPT",
+        "问chatgpt",
+        "问GPT",
+        "问gpt",
+        "ChatGPT：",
+        "ChatGPT:",
+        "chatgpt：",
+        "chatgpt:",
+        "GPT：",
+        "GPT:",
+        "gpt：",
+        "gpt:",
+    )
+    stripped = text.strip()
+    for prefix in prefixes:
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return stripped
+
+
 def _chat_answer(text: str) -> str:
     provider = os.getenv("CHAT_PROVIDER", "auto").strip().lower()
     yuanbao_prefixes = ("问元宝", "元宝：", "元宝:")
     explicit_yuanbao = _is_yuanbao_request(text)
+    explicit_chatgpt = _is_chatgpt_request(text) and not explicit_yuanbao
     question = text
 
     if explicit_yuanbao:
@@ -430,6 +457,16 @@ def _chat_answer(text: str) -> str:
             if question.startswith(prefix):
                 question = question[len(prefix):].strip()
                 break
+
+    if explicit_chatgpt:
+        from chatgpt_agent import ChatGPTWebError, ask_chatgpt
+
+        try:
+            answer = ask_chatgpt(_strip_chatgpt_command(text))
+            return "【ChatGPT 网页】\n\n" + answer
+        except ChatGPTWebError as exc:
+            logger.warning("ChatGPT 网页调用不可用: %s", exc)
+            return f"【ChatGPT 网页】\n\n{exc}"
 
     use_yuanbao = provider in {"yuanbao", "both"} or explicit_yuanbao
     if not use_yuanbao:
@@ -467,7 +504,7 @@ def process_message(chat_id: str, text: str) -> None:
     try:
         send_text_message(chat_id, "⏳ 已收到请求，正在处理中...")
         intent = classify_intent(text)
-        if _is_yuanbao_request(text):
+        if _is_yuanbao_request(text) or _is_chatgpt_request(text):
             intent = {"intent": "chat"}
         logger.info("处理消息 chat_id=%s intent=%s", chat_id, intent["intent"])
 

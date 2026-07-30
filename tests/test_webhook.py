@@ -38,6 +38,30 @@ class WebhookTests(unittest.TestCase):
         self.assertTrue(main._is_yuanbao_request("今天的新闻，交给元宝"))
         self.assertFalse(main._is_yuanbao_request("请普通总结一下"))
 
+    def test_chatgpt_keyword_and_command_cleanup(self):
+        self.assertTrue(main._is_chatgpt_request("问 GPT 这个问题"))
+        self.assertTrue(main._is_chatgpt_request("请交给ChatGPT"))
+        self.assertFalse(main._is_chatgpt_request("请普通总结一下"))
+        self.assertEqual(main._strip_chatgpt_command("问GPT 测试"), "测试")
+        self.assertEqual(main._strip_chatgpt_command("GPT：测试"), "测试")
+
+    def test_yuanbao_takes_precedence_over_chatgpt(self):
+        with (
+            patch.object(main, "call_glm"),
+            patch.dict(os.environ, {"CHAT_PROVIDER": "auto"}),
+            patch("yuanbao_agent.ask_yuanbao", return_value="元宝回答"),
+        ):
+            result = main._chat_answer("元宝比较一下 GPT")
+
+        self.assertIn("【元宝", result)
+        self.assertIn("元宝回答", result)
+
+    def test_chatgpt_request_uses_web_agent(self):
+        with patch("chatgpt_agent.ask_chatgpt", return_value="网页回答"):
+            result = main._chat_answer("问GPT 测试")
+
+        self.assertEqual(result, "【ChatGPT 网页】\n\n网页回答")
+
     def test_url_verification(self):
         response = self.client.post(
             "/webhook",
