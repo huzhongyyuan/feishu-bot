@@ -15,24 +15,28 @@ from playwright.sync_api import sync_playwright
 logger = logging.getLogger(__name__)
 _SECTION_RE = re.compile(r"^[一二三四五六七八九十]+、")
 _BULLET_ONLY = {"•", "·", "-", "–", "—"}
+_NUMBER_ONLY_RE = re.compile(r"^\d+[.)、]$")
 
 
 def _format_answer(text: str) -> str:
     """Make Yuanbao's visual layout readable in a plain Feishu message."""
     result: list[str] = []
-    pending_bullet = False
+    pending_prefix = ""
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
         if line in _BULLET_ONLY:
-            pending_bullet = True
+            pending_prefix = "•"
+            continue
+        if _NUMBER_ONLY_RE.match(line):
+            pending_prefix = line
             continue
 
-        if pending_bullet:
-            line = f"• {line}"
-            pending_bullet = False
+        if pending_prefix:
+            line = f"{pending_prefix} {line}"
+            pending_prefix = ""
         elif line.startswith(("•", "·")):
             line = f"• {line[1:].strip()}"
 
@@ -109,7 +113,7 @@ def _append_reference_links(
     return answer.rstrip() + "\n\n参考链接\n\n" + "\n\n".join(rows)
 
 
-def _wait_for_answer(page, question: str) -> str:
+def _wait_for_answer(page) -> str:
     deadline = time.monotonic() + float(
         os.getenv("YUANBAO_ANSWER_TIMEOUT_SECONDS", "90")
     )
@@ -118,8 +122,7 @@ def _wait_for_answer(page, question: str) -> str:
 
     while time.monotonic() < deadline:
         page.wait_for_timeout(2_500)
-        text = page.locator("body").inner_text(timeout=20_000)
-        answer = _latest_answer(text, question)
+        answer = _final_answer_text(page)
         if len(answer) < 20:
             continue
         if answer == previous:
@@ -133,6 +136,32 @@ def _wait_for_answer(page, question: str) -> str:
     if previous:
         return previous
     raise RuntimeError("元宝在限定时间内没有返回可读取的回答。")
+
+
+def _final_answer_text(page) -> str:
+    """Read the final answer while excluding DeepSeek's private thinking UI."""
+    blocks = page.eval_on_selector_all(
+        ".agent-chat__list__item--ai .hyc-content-md",
+        """elements => elements
+            .filter(element =>
+                !element.closest('.hyc-component-deepsearch-cot')
+            )
+            .map(element => (element.innerText || '').trim())
+            .filter(Boolean)""",
+    )
+    return _format_answer(blocks[-1]) if blocks else ""
+
+
+def _answer_prompt(question: str) -> str:
+    return (
+        question.rstrip()
+        + "\n\n回答格式要求："
+        + "只输出给用户看的最终答案，不要输出思考过程；"
+        + "使用清晰的小标题、分段和项目符号；"
+        + "如果引用了网页或资料，请在答案末尾增加“参考链接”，"
+        + "逐条写出来源名称和以 https:// 开头的完整明文 URL，"
+        + "不要只把链接藏在超链接文字中。"
+    )
 
 
 def _env_enabled(name: str, default: bool = True) -> bool:
@@ -235,9 +264,10 @@ def ask_yuanbao(question: str) -> str:
                 for link in _page_links(page)
                 if link.get("href")
             }
-            box.fill(question)
+            submitted_question = _answer_prompt(question)
+            box.fill(submitted_question)
             box.press("Enter")
-            answer = _wait_for_answer(page, question)
+            answer = _wait_for_answer(page)
             links = _new_reference_links(before_hrefs, _page_links(page))
             answer = _append_reference_links(answer, links)
             max_chars = int(os.getenv("YUANBAO_MAX_ANSWER_CHARS", "12000"))
