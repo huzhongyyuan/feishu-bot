@@ -559,8 +559,20 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     event = data.get("event") or {}
     message = event.get("message") or {}
-    sender_type = (event.get("sender") or {}).get("sender_type", "")
+    sender = event.get("sender") or {}
+    sender_type = sender.get("sender_type", "")
     if sender_type in {"bot", "app"}:
+        return {"code": 0}
+
+    sender_id = sender.get("sender_id") or {}
+    sender_open_id = sender_id.get("open_id", "")
+    allowed_open_ids = {
+        value.strip()
+        for value in os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").split(",")
+        if value.strip()
+    }
+    if allowed_open_ids and sender_open_id not in allowed_open_ids:
+        logger.info("忽略非白名单用户 sender_open_id=%s", sender_open_id)
         return {"code": 0}
 
     if message.get("message_type") != "text":
