@@ -30,14 +30,52 @@ class ChatGPTWebError(RuntimeError):
 
 
 def _find_chatgpt_page(browser):
-    for context in browser.contexts:
-        for page in context.pages:
-            if page.url.startswith("https://chatgpt.com"):
-                return page
-
     if not browser.contexts:
         raise ChatGPTWebError("服务器浏览器上下文不存在，请检查后台浏览器。")
-    return browser.contexts[0].new_page()
+
+    pages = [
+        page
+        for context in browser.contexts
+        for page in context.pages
+    ]
+    chatgpt_pages = [
+        page for page in pages if page.url.startswith("https://chatgpt.com")
+    ]
+    primary = next(
+        (
+            page
+            for page in chatgpt_pages
+            if page.url.rstrip("/") == "https://chatgpt.com"
+        ),
+        chatgpt_pages[0] if chatgpt_pages else None,
+    )
+    if primary is None:
+        primary = browser.contexts[0].new_page()
+
+    # This is a dedicated server profile. Restored tabs and extension welcome
+    # pages waste hundreds of MB and make later ChatGPT navigation time out.
+    for extra_page in pages:
+        if extra_page is primary:
+            continue
+        try:
+            extra_page.close(run_before_unload=False)
+        except Exception:
+            pass
+    return primary
+
+
+def _prepare_new_chat(page) -> None:
+    if page.url.rstrip("/") != "https://chatgpt.com":
+        page.goto(
+            "https://chatgpt.com/",
+            wait_until="commit",
+            timeout=15_000,
+        )
+    page.locator(_COMPOSER_SELECTOR).first.wait_for(
+        state="attached",
+        timeout=15_000,
+    )
+    page.wait_for_timeout(500)
 
 
 def _visible_composer(page):
@@ -226,12 +264,7 @@ def ask_chatgpt(question: str) -> str:
                 ) from exc
 
             page = _find_chatgpt_page(browser)
-            page.goto(
-                "https://chatgpt.com/",
-                wait_until="domcontentloaded",
-                timeout=30_000,
-            )
-            page.wait_for_timeout(1500)
+            _prepare_new_chat(page)
 
             if page.get_by_role("button", name="Log in", exact=True).count():
                 raise ChatGPTWebError("ChatGPT 登录已失效，需要重新登录。")

@@ -45,12 +45,29 @@ if ! pgrep -f "websockify .*127\\.0\\.0\\.1:6080 " >/dev/null; then
 fi
 
 if ! pgrep -f "^${CHROMIUM_BIN} .*--user-data-dir=${PROFILE_DIR}" >/dev/null; then
+    for stale_lock in \
+        "${PROFILE_DIR}/SingletonCookie" \
+        "${PROFILE_DIR}/SingletonLock" \
+        "${PROFILE_DIR}/SingletonSocket"
+    do
+        if [[ -L "${stale_lock}" ]]; then
+            unlink "${stale_lock}"
+        fi
+    done
+
     nohup "${CHROMIUM_BIN}" \
         --no-sandbox \
         --no-first-run \
         --no-default-browser-check \
+        --disable-extensions \
+        --disable-background-networking \
+        --disable-component-update \
+        --disable-sync \
         --disable-dev-shm-usage \
         --disable-gpu \
+        --metrics-recording-only \
+        --no-pings \
+        --renderer-process-limit=4 \
         --proxy-server=http://127.0.0.1:7890 \
         --user-data-dir="${PROFILE_DIR}" \
         --remote-debugging-address=127.0.0.1 \

@@ -2,16 +2,40 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 BOT_DIR = Path(__file__).resolve().parents[1] / "feishu_bot"
 sys.path.insert(0, str(BOT_DIR))
 
-from chatgpt_agent import format_chatgpt_answer  # noqa: E402
+from chatgpt_agent import _prepare_new_chat, format_chatgpt_answer  # noqa: E402
 
 
 class ChatGPTFormatTests(unittest.TestCase):
+    def test_home_page_does_not_navigate_again(self):
+        page = MagicMock()
+        page.url = "https://chatgpt.com/"
+
+        _prepare_new_chat(page)
+
+        page.goto.assert_not_called()
+        page.locator.return_value.first.wait_for.assert_called_once_with(
+            state="attached",
+            timeout=15_000,
+        )
+
+    def test_conversation_uses_fast_navigation(self):
+        page = MagicMock()
+        page.url = "https://chatgpt.com/c/test"
+
+        _prepare_new_chat(page)
+
+        page.goto.assert_called_once_with(
+            "https://chatgpt.com/",
+            wait_until="commit",
+            timeout=15_000,
+        )
+
     def test_compacts_noise_blank_lines_and_table(self):
         answer = """
 最近主要方向
