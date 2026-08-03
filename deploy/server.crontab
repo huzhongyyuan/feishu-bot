@@ -1,2 +1,3 @@
 * * * * * /usr/local/sbin/mihomo-watchdog
 * * * * * /workspace/deploy/chatgpt-browser-watchdog.sh
+* * * * * /workspace/deploy/ngrok-watchdog.sh
