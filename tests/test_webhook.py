@@ -23,6 +23,7 @@ class WebhookTests(unittest.TestCase):
                 "FEISHU_VERIFICATION_TOKEN": "",
                 "FEISHU_ALLOWED_OPEN_IDS": "",
                 "FEISHU_ALLOWED_CHAT_IDS": "",
+                "FEISHU_BOT_OPEN_ID": "ou_bot",
             },
         )
         self.env_patch.start()
@@ -95,7 +96,13 @@ class WebhookTests(unittest.TestCase):
                     "chat_id": "oc_test",
                     "message_type": "text",
                     "create_time": str(int(time.time() * 1000)),
-                    "mentions": [{"key": "@_user_1"}],
+                    "mentions": [
+                        {
+                            "key": "@_user_1",
+                            "id": {"open_id": "ou_bot"},
+                            "name": "HumanGroupBot",
+                        }
+                    ],
                     "content": json.dumps(
                         {"text": "@_user_1 问元宝 测试"},
                         ensure_ascii=False,
@@ -193,7 +200,13 @@ class WebhookTests(unittest.TestCase):
                     "chat_id": "oc_test",
                     "message_type": "text",
                     "create_time": str(int(time.time() * 1000)),
-                    "mentions": [{"key": "@_user_1"}],
+                    "mentions": [
+                        {
+                            "key": "@_user_1",
+                            "id": {"open_id": "ou_bot"},
+                            "name": "HumanGroupBot",
+                        }
+                    ],
                     "content": json.dumps(
                         {"text": "@_user_1 问 GPT 测试"},
                         ensure_ascii=False,
@@ -229,7 +242,13 @@ class WebhookTests(unittest.TestCase):
                     "chat_id": "oc_shared_group",
                     "message_type": "text",
                     "create_time": str(int(time.time() * 1000)),
-                    "mentions": [{"key": "@_user_1"}],
+                    "mentions": [
+                        {
+                            "key": "@_user_1",
+                            "id": {"open_id": "ou_bot"},
+                            "name": "HumanGroupBot",
+                        }
+                    ],
                     "content": json.dumps(
                         {"text": "@_user_1 问 GPT 测试"},
                         ensure_ascii=False,
@@ -251,6 +270,41 @@ class WebhookTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         process_message.assert_called_once_with("oc_shared_group", "问 GPT 测试")
+
+    def test_mentioning_another_user_does_not_trigger_bot(self):
+        payload = {
+            "header": {
+                "event_id": f"other-mention-{time.time_ns()}",
+                "event_type": "im.message.receive_v1",
+            },
+            "event": {
+                "sender": {
+                    "sender_type": "user",
+                    "sender_id": {"open_id": "ou_huu"},
+                },
+                "message": {
+                    "chat_id": "oc_shared_group",
+                    "message_type": "text",
+                    "create_time": str(int(time.time() * 1000)),
+                    "mentions": [
+                        {
+                            "key": "@_user_1",
+                            "id": {"open_id": "ou_someone_else"},
+                            "name": "其他用户",
+                        }
+                    ],
+                    "content": json.dumps(
+                        {"text": "@_user_1 你看一下"},
+                        ensure_ascii=False,
+                    ),
+                },
+            },
+        }
+        with patch.object(main, "process_message") as process_message:
+            response = self.client.post("/webhook", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        process_message.assert_not_called()
 
 
 if __name__ == "__main__":

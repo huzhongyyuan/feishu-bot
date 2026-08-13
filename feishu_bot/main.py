@@ -525,6 +525,28 @@ def _strip_chatgpt_command(text: str) -> str:
     return stripped
 
 
+def _message_mentions_bot(message: dict) -> bool:
+    """Return true only when the configured bot itself is mentioned."""
+    mentions = message.get("mentions") or []
+    bot_open_id = os.getenv("FEISHU_BOT_OPEN_ID", "").strip()
+    bot_name = os.getenv("FEISHU_BOT_NAME", "HumanGroupBot").strip().casefold()
+    for mention in mentions:
+        identifier = mention.get("id") or {}
+        if isinstance(identifier, dict):
+            mention_open_id = str(identifier.get("open_id") or "").strip()
+        else:
+            mention_open_id = str(
+                mention.get("open_id") or identifier or ""
+            ).strip()
+        if bot_open_id and mention_open_id == bot_open_id:
+            return True
+        if not bot_open_id:
+            mention_name = str(mention.get("name") or "").strip().casefold()
+            if bot_name and mention_name == bot_name:
+                return True
+    return False
+
+
 def _chat_answer(text: str, chat_id: str = "") -> str:
     from chat_memory import preferred_chat_provider
 
@@ -802,7 +824,8 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         logger.info("忽略服务启动前的历史消息 create_time=%s", message.get("create_time"))
         return {"code": 0}
 
-    if not message.get("mentions"):
+    if not _message_mentions_bot(message):
+        logger.info("忽略未 @ 机器人的群消息 chat_id=%s", chat_id)
         return {"code": 0}
 
     try:

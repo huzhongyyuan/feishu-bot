@@ -114,7 +114,12 @@ members access from other chats:
 ```dotenv
 FEISHU_ALLOWED_OPEN_IDS=ou_owner
 FEISHU_ALLOWED_CHAT_IDS=oc_shared_group
+FEISHU_BOT_OPEN_ID=ou_bot_identity
 ```
+
+`FEISHU_BOT_OPEN_ID` is used to distinguish an actual bot mention from users
+mentioning one another. Messages that mention somebody else are ignored and
+never enter conversational memory.
 
 Conversational memory is stored in `data/chat_memory.db` and partitioned by
 Feishu `chat_id`. Each group can have a separate role profile, and only its
