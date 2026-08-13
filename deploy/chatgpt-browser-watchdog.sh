@@ -67,7 +67,9 @@ if ! pgrep -f "^${CHROMIUM_BIN} .*--user-data-dir=${PROFILE_DIR}" >/dev/null; th
         --disable-gpu \
         --metrics-recording-only \
         --no-pings \
-        --renderer-process-limit=4 \
+        --renderer-process-limit=2 \
+        --disable-features=Glic,OptimizationHints,MediaRouter,Translate \
+        --js-flags=--max-old-space-size=256 \
         --proxy-server=http://127.0.0.1:7890 \
         --user-data-dir="${PROFILE_DIR}" \
         --remote-debugging-address=127.0.0.1 \

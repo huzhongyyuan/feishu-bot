@@ -55,15 +55,50 @@ sections and bullet lists for Feishu, and appends newly generated source links.
 
 ## Daily scheduler
 
-Set `FEISHU_CHAT_ID` before enabling the scheduler:
+The current container uses the per-chat subscription dispatcher from
+`deploy/server.crontab`. It checks due subscriptions once per minute and uses
+Asia/Shanghai for every saved schedule:
 
 ```bash
-cp deploy/systemd/feishu-scheduler.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now feishu-scheduler.service
+chmod +x /workspace/deploy/paper-subscription-dispatcher.sh
+crontab /workspace/deploy/server.crontab
 ```
+
+Supported Feishu commands:
+
+```text
+@HumanGroupBot 订阅 世界模型、视频生成、人体动作
+@HumanGroupBot 推送时间 09:30
+@HumanGroupBot 工作日推送
+@HumanGroupBot 每天推送
+@HumanGroupBot 暂停论文推送
+@HumanGroupBot 恢复论文推送
+@HumanGroupBot 查看订阅
+```
+
+Paper titles, authors, abstracts, dates and URLs are forced to the values from
+the arXiv feed. Model output is used only for Chinese interpretation and
+ranking. A recommendation must have verified official public code, a complete
+Teaser/Figure 1 and a distinct network or method architecture figure. Papers
+that fail any of these checks are skipped instead of being sent as text-only
+cards.
+
+The weekly roundup runs on Monday at 09:00 Asia/Shanghai by default. It sends
+three unique papers in each category (12 total): Motion Generation, Video,
+Embodied AI and World Models. It prioritizes the previous calendar week and
+uses the preceding 30 days only as a fallback. Configure it with:
+
+```dotenv
+WEEKLY_PUSH_WEEKDAY=0
+WEEKLY_PUSH_TIME=09:00
+```
+
+Optional alphaXiv discovery is enabled with `ALPHAXIV_API_KEY`. The key belongs
+only in `feishu_bot/.env`; never commit it. alphaXiv results are treated as a
+discovery signal and are resolved through arXiv again before recommendation.
 
 ## Public callback
 
-For production, use a named Cloudflare Tunnel with a fixed hostname. Quick
-Tunnels under `trycloudflare.com` are temporary and can change after restart.
+For production, use a fixed ngrok domain or a named Cloudflare Tunnel. Temporary
+domains can change after restart and require the Feishu callback URL to be
+updated again.

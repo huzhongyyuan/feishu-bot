@@ -7,10 +7,15 @@
     "Video Generation",
     "Multimodal Learning",
     "Animation",
-    "Computer Vision"
+    "Computer Vision",
+    "Panoramic Camera",
+    "360-degree Video",
+    "Omnidirectional Vision",
+    "Spherical Video"
   ],
   "sources": [
     "HuggingFace Daily Papers",
+    "alphaXiv Discover Papers",
     "arXiv cs.CV",
     "OpenReview",
     "Semantic Scholar"

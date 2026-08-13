@@ -1,3 +1,6 @@
 * * * * * /usr/local/sbin/mihomo-watchdog
+* * * * * /workspace/deploy/tailscale-watchdog.sh
+* * * * * /workspace/deploy/feishu-watchdog.sh
 * * * * * /workspace/deploy/chatgpt-browser-watchdog.sh
 * * * * * /workspace/deploy/ngrok-watchdog.sh
+* * * * * /workspace/deploy/paper-subscription-dispatcher.sh

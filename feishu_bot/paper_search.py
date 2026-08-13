@@ -91,7 +91,18 @@ def _parse_entries(feed) -> list[dict]:
                 "summary": abstract,
                 "url": paper_url,
                 "paper_url": paper_url,
+                "pdf_url": (
+                    f"https://arxiv.org/pdf/{arxiv_id}"
+                    if arxiv_id
+                    else ""
+                ),
+                "published": str(getattr(entry, "published", "")),
+                "updated": str(getattr(entry, "updated", "")),
+                "categories": [
+                    tag.term for tag in getattr(entry, "tags", [])
+                ],
                 "source": "arXiv",
+                "verified_source": True,
             }
         )
 

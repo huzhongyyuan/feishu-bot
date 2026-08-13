@@ -1,0 +1,66 @@
+from datetime import datetime, timedelta, timezone
+
+import daily_paper
+from daily_paper import published_within_lookback, select_with_complete_images
+
+
+def _paper(days_ago: int) -> dict:
+    published = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return {"published": published.isoformat()}
+
+
+def test_recent_paper_is_allowed():
+    assert published_within_lookback(_paper(13))
+
+
+def test_old_paper_is_rejected():
+    assert not published_within_lookback(_paper(15))
+
+
+def test_missing_or_invalid_date_is_rejected():
+    assert not published_within_lookback({})
+    assert not published_within_lookback({"published": "not-a-date"})
+
+
+def test_selection_skips_text_only_candidate(monkeypatch):
+    def fake_images(paper):
+        if paper["title"] == "No figures":
+            return []
+        return [
+            {"kind": "teaser", "path": "/tmp/t.jpg"},
+            {"kind": "architecture", "path": "/tmp/a.jpg"},
+        ]
+
+    monkeypatch.setattr("paper_media.prepare_paper_images", fake_images)
+    primary = [{"title": "No figures", "score": 10}]
+    analyzed = primary + [{"title": "Complete figures", "score": 9}]
+    selected = select_with_complete_images(primary, analyzed, [], limit=1)
+    assert [paper["title"] for paper in selected] == ["Complete figures"]
+
+
+def test_influential_source_wins_when_quality_is_close():
+    ordinary = {
+        "score": 9.2,
+        "institution_impact_tier": 1,
+        "repo_stars": 0,
+    }
+    major_lab = {
+        "score": 8.8,
+        "institution_impact_tier": 3,
+        "repo_stars": 0,
+    }
+    assert daily_paper._recommendation_priority(major_lab) > daily_paper._recommendation_priority(ordinary)
+
+
+def test_institution_reputation_does_not_override_large_quality_gap():
+    strong_ordinary = {
+        "score": 9.7,
+        "institution_impact_tier": 1,
+        "repo_stars": 0,
+    }
+    weak_major_lab = {
+        "score": 8.5,
+        "institution_impact_tier": 3,
+        "repo_stars": 0,
+    }
+    assert daily_paper._recommendation_priority(strong_ordinary) > daily_paper._recommendation_priority(weak_major_lab)

@@ -22,6 +22,9 @@ def classify_intent(text: str) -> dict:
         }
 
     weekly_words = [
+        "上周推荐的论文",
+        "上周论文",
+        "上周推荐论文",
         "本周论文总结",
         "总结本周论文",
         "论文周报",

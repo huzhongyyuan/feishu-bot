@@ -110,6 +110,73 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(response.json(), {"code": 0})
         process_message.assert_called_once_with("oc_test", "问元宝 测试")
 
+    def test_subscription_command_skips_general_chat(self):
+        with (
+            patch.object(
+                main,
+                "handle_subscription_command",
+                return_value="订阅已更新",
+            ),
+            patch.object(main, "send_text_message") as send_text,
+            patch.object(main, "classify_intent") as classify_intent,
+        ):
+            main.process_message("oc_test", "查看订阅")
+
+        send_text.assert_called_once_with("oc_test", "订阅已更新")
+        classify_intent.assert_not_called()
+
+    def test_verified_metadata_overrides_model_claims(self):
+        paper = {
+            "id": "2607.12345",
+            "title": "Verified Title",
+            "authors": ["Author A"],
+            "abstract": "Official abstract",
+            "paper_url": "https://arxiv.org/abs/2607.12345",
+        }
+        model_output = {
+            "title": "Invented Title",
+            "authors": ["Fake Author"],
+            "abstract": "Fake abstract",
+            "paper_url": "https://example.com/fake",
+            "code_url": "https://example.com/fake-code",
+            "summary": "AI interpretation",
+        }
+
+        result = main._merge_verified_paper_data(paper, model_output)
+
+        self.assertEqual(result["title"], "Verified Title")
+        self.assertEqual(result["authors"], ["Author A"])
+        self.assertEqual(result["abstract"], "Official abstract")
+        self.assertEqual(result["paper_url"], "https://arxiv.org/abs/2607.12345")
+        self.assertEqual(result["code_url"], "")
+        self.assertEqual(result["summary"], "AI interpretation")
+
+    def test_manual_paper_card_contains_bilingual_guide_and_abstract(self):
+        with patch.object(main, "_send_feishu_message") as send:
+            main.send_card(
+                "oc_test",
+                {
+                    "title": "Paper",
+                    "summary": "中文导读。",
+                    "summary_en": "English guide.",
+                    "abstract_zh": "中文摘要翻译。",
+                    "abstract": "Official abstract.",
+                    "contributions": [],
+                    "code_url": "https://github.com/org/paper",
+                    "llm_open_source_verified": True,
+                    "open_source_verified": True,
+                    "large_team_verified": True,
+                },
+            )
+        card = send.call_args.args[2]
+        content = str(card["elements"])
+        self.assertIn("开源代码", content)
+        self.assertIn("https://github.com/org/paper", content)
+        self.assertIn("中文导读", content)
+        self.assertIn("English Guide", content)
+        self.assertIn("摘要 · 中文翻译", content)
+        self.assertIn("Abstract · English Original", content)
+
     def test_non_allowlisted_sender_is_ignored(self):
         payload = {
             "header": {

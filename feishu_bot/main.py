@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 import os
 import json
 import logging
 import secrets
 import time
+import requests
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from dotenv import load_dotenv
-import lark_oapi as lark
 
 from intent_router import classify_intent
 from event_db import init_event_db, seen_or_save
 from glm_client import call_glm
+from subscriptions import handle_subscription_command, init_subscriptions
+from feishu_text import format_latex_for_feishu
 
 
 load_dotenv()
@@ -23,6 +27,7 @@ logger = logging.getLogger("feishu_bot")
 app = FastAPI()
 SERVICE_START_TIME = time.time()
 init_event_db()
+init_subscriptions()
 
 REQUIRED_CONFIG = (
     "FEISHU_APP_ID",
@@ -40,73 +45,58 @@ if not os.getenv("FEISHU_VERIFICATION_TOKEN"):
 
 
 
-def get_client():
+def _send_feishu_message(chat_id: str, msg_type: str, content: dict) -> None:
+    from feishu_sender import get_token
 
-    return (
-        lark.Client.builder()
-        .app_id(
-            os.getenv("FEISHU_APP_ID")
-        )
-        .app_secret(
-            os.getenv("FEISHU_APP_SECRET")
-        )
-        .build()
+    response = requests.post(
+        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+        headers={
+            "Authorization": f"Bearer {get_token()}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "receive_id": chat_id,
+            "msg_type": msg_type,
+            "content": json.dumps(content, ensure_ascii=False),
+        },
+        timeout=30,
     )
-
-
-def _ensure_lark_success(response, action: str) -> None:
-    if hasattr(response, "success") and not response.success():
-        code = getattr(response, "code", "unknown")
-        msg = getattr(response, "msg", "unknown")
-        raise RuntimeError(f"{action}失败：code={code}, msg={msg}")
+    response.raise_for_status()
+    result = response.json()
+    if result.get("code", 0) != 0:
+        raise RuntimeError(f"发送飞书消息失败：{result}")
 
 
 
 def send_text_message(chat_id,text):
-
-    client=get_client()
-
-    req=(
-        lark.api.im.v1.CreateMessageRequest.builder()
-        .receive_id_type("chat_id")
-        .request_body(
-            lark.api.im.v1.CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type("text")
-            .content(
-                json.dumps(
-                    {
-                        "text":text
-                    },
-                    ensure_ascii=False
-                )
-            )
-            .build()
-        )
-        .build()
-    )
-
-    response = client.im.v1.message.create(req)
-    _ensure_lark_success(response, "发送飞书文本消息")
+    _send_feishu_message(chat_id, "text", {"text": text})
 
 
 
 def send_card(chat_id, data):
-
-    client = get_client()
-
-    title = str(data.get("title") or "未命名论文")
-    venue = str(data.get("venue") or data.get("source") or "arXiv")
+    if not (
+        data.get("code_url")
+        and data.get("llm_open_source_verified")
+        and data.get("open_source_verified")
+        and data.get("large_team_verified")
+    ):
+        raise RuntimeError(
+            "论文未同时通过 LLM、仓库 API/README 与大团队核验，已取消发送"
+        )
+    title = format_latex_for_feishu(data.get("title") or "未命名论文")
+    venue = format_latex_for_feishu(data.get("venue") or data.get("source") or "arXiv")
     source = str(data.get("source") or "arXiv")
     score = data.get("score", "-")
-    summary = str(data.get("summary") or "暂无中文总结")
-    abstract = str(data.get("abstract") or "")
+    summary = format_latex_for_feishu(data.get("summary") or "暂无中文总结")
+    summary_en = format_latex_for_feishu(data.get("summary_en") or "")
+    abstract = format_latex_for_feishu(data.get("abstract"))
+    abstract_zh = format_latex_for_feishu(data.get("abstract_zh") or "")
     paper_url = str(data.get("paper_url") or data.get("url") or "")
     code_url = str(data.get("code_url") or "")
     project_url = str(data.get("project_url") or "")
 
     contributions = [
-        str(item).strip()
+        format_latex_for_feishu(item)
         for item in data.get("contributions", [])
         if str(item).strip()
     ][:4]
@@ -171,6 +161,15 @@ def send_card(chat_id, data):
 
     elements = [
         {
+            "tag": "note",
+            "elements": [
+                {
+                    "tag": "plain_text",
+                    "content": "✅ 标题、作者、摘要和链接来自 arXiv；中文总结与贡献为 AI 解读"
+                }
+            ]
+        },
+        {
             "tag": "div",
             "text": {
                 "tag": "lark_md",
@@ -191,6 +190,22 @@ def send_card(chat_id, data):
             }
         },
         {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    "💻 **开源代码**："
+                    f"[{str(data.get('code_host') or 'GitHub/GitLab')} 官方仓库"
+                    + (
+                        f" · ⭐ {int(data.get('repo_stars') or 0)}"
+                        if int(data.get("repo_stars") or 0)
+                        else ""
+                    )
+                    + f"]({code_url})"
+                ),
+            },
+        },
+        {
             "tag": "hr"
         },
         {
@@ -198,24 +213,53 @@ def send_card(chat_id, data):
             "text": {
                 "tag": "lark_md",
                 "content": (
-                    f"**一句话总结**\n{summary}"
+                    f"**中文导读**\n{summary}"
                 )
             }
         },
+    ]
+
+    verification = []
+    if data.get("open_source_verified") and data.get("llm_open_source_verified"):
+        verification.append("LLM 已确认论文与官方仓库对应")
+    if code_url:
+        host = str(data.get("code_host") or "GitHub/GitLab")
+        stars = int(data.get("repo_stars") or 0)
+        verification.append(f"{host} 公开仓库 API 已核验" + (f" · ⭐ {stars}" if stars else ""))
+    if data.get("team_evidence"):
+        verification.append(str(data["team_evidence"]))
+    if verification:
+        elements.append(
+            {
+                "tag": "note",
+                "elements": [
+                    {"tag": "plain_text", "content": "✅ " + "｜".join(verification)}
+                ],
+            }
+        )
+
+    detail_elements = [
         {
             "tag": "div",
             "text": {
                 "tag": "lark_md",
-                "content": (
-                    "**核心亮点**\n"
-                    f"{contribution_text}"
-                )
-            }
+                "content": "**核心亮点**\n" + contribution_text,
+            },
         }
     ]
+    if summary_en:
+        detail_elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**English Guide · 英文导读**\n{summary_en}",
+                },
+            }
+        )
 
     if metadata:
-        elements.append(
+        detail_elements.append(
             {
                 "tag": "div",
                 "text": {
@@ -229,7 +273,7 @@ def send_card(chat_id, data):
         )
 
     if tag_text:
-        elements.append(
+        detail_elements.append(
             {
                 "tag": "div",
                 "text": {
@@ -240,7 +284,7 @@ def send_card(chat_id, data):
         )
 
     if data.get("insight"):
-        elements.extend(
+        detail_elements.extend(
             [
                 {
                     "tag": "hr"
@@ -251,15 +295,20 @@ def send_card(chat_id, data):
                         "tag": "lark_md",
                         "content": (
                             "**对当前研究的启发**\n"
-                            f"{data['insight']}"
+                            f"{format_latex_for_feishu(data['insight'])}"
                         )
                     }
                 }
             ]
         )
 
-    if abstract:
-        elements.extend(
+    if abstract_zh or abstract:
+        abstract_parts = []
+        if abstract_zh:
+            abstract_parts.append(f"**摘要 · 中文翻译**\n{abstract_zh}")
+        if abstract:
+            abstract_parts.append(f"**Abstract · English Original**\n{abstract}")
+        detail_elements.extend(
             [
                 {
                     "tag": "hr"
@@ -268,14 +317,36 @@ def send_card(chat_id, data):
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": (
-                            "**Abstract · Original**\n"
-                            f"{abstract}"
-                        )
+                        "content": "\n\n".join(abstract_parts)
                     }
                 }
             ]
         )
+
+    elements.append(
+        {
+            "tag": "collapsible_panel",
+            "expanded": False,
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": "🔬 LLM 详细拆解与双语摘要（点击展开）",
+                },
+                "vertical_align": "center",
+                "icon": {
+                    "tag": "standard_icon",
+                    "token": "down-small-ccm_outlined",
+                    "size": "16px 16px",
+                },
+                "icon_position": "right",
+                "icon_expanded_angle": -180,
+            },
+            "border": {"color": "grey", "corner_radius": "6px"},
+            "vertical_spacing": "8px",
+            "padding": "8px 10px 8px 10px",
+            "elements": detail_elements,
+        }
+    )
 
     actions = []
 
@@ -326,19 +397,6 @@ def send_card(chat_id, data):
             }
         )
 
-    if not code_url:
-        elements.append(
-            {
-                "tag": "note",
-                "elements": [
-                    {
-                        "tag": "plain_text",
-                        "content": "💻 代码：暂未公开"
-                    }
-                ]
-            }
-        )
-
     card = {
         "config": {
             "wide_screen_mode": True,
@@ -358,28 +416,49 @@ def send_card(chat_id, data):
         "elements": elements
     }
 
-    req = (
-        lark.api.im.v1.CreateMessageRequest.builder()
-        .receive_id_type("chat_id")
-        .request_body(
-            lark.api.im.v1.CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type("interactive")
-            .content(
-                json.dumps(
-                    card,
-                    ensure_ascii=False
-                )
-            )
-            .build()
-        )
-        .build()
-    )
-
-    response = client.im.v1.message.create(req)
-    _ensure_lark_success(response, "发送飞书论文卡片")
+    _send_feishu_message(chat_id, "interactive", card)
 
     logger.info("飞书论文卡片发送成功 chat_id=%s", chat_id)
+
+
+def _merge_verified_paper_data(paper: dict, analysis: dict) -> dict:
+    """Keep model interpretation while forcing all source metadata to arXiv values."""
+    result = dict(analysis or {})
+    result.update(
+        {
+            "id": paper.get("id", ""),
+            "title": paper.get("title", ""),
+            "authors": list(paper.get("authors", [])),
+            "institutions": list(paper.get("institutions", [])),
+            "institutions_source": paper.get("institutions_source", ""),
+            "contributions_original": list(
+                paper.get("contributions_original", [])
+            ),
+            "contributions_original_source": paper.get(
+                "contributions_original_source", ""
+            ),
+            "abstract": paper.get("abstract") or paper.get("summary", ""),
+            "paper_url": paper.get("paper_url") or paper.get("url", ""),
+            "source": "arXiv",
+            "venue": "arXiv",
+            "code_url": paper.get("code_url", ""),
+            "project_url": paper.get("project_url", ""),
+            "code_host": paper.get("code_host", ""),
+            "repo_stars": paper.get("repo_stars", 0),
+            "repo_archived": paper.get("repo_archived", False),
+            "open_source_verified": paper.get("open_source_verified", False),
+            "large_team_verified": paper.get("large_team_verified", False),
+            "team_evidence": paper.get("team_evidence", ""),
+            "llm_open_source_verified": paper.get(
+                "llm_open_source_verified", False
+            ),
+            "llm_open_source_evidence": paper.get(
+                "llm_open_source_evidence", ""
+            ),
+            "metadata_verified": True,
+        }
+    )
+    return result
 
 
 def _verify_webhook_token(data: dict) -> None:
@@ -500,8 +579,43 @@ def _chat_answer(text: str) -> str:
     return f"【元宝 · {model_label}{deep_label}】\n\n{yuanbao_answer}"
 
 
+def _archive_conversation_safely(
+    *,
+    papers: list[dict] | None = None,
+    question: str = "",
+    answer: str = "",
+) -> None:
+    try:
+        from conversation_archive import (
+            archive_conversation_papers,
+            archive_papers_from_conversation,
+        )
+
+        count = (
+            archive_conversation_papers(papers)
+            if papers is not None
+            else archive_papers_from_conversation(question, answer)
+        )
+        if count:
+            logger.info("对话论文已静默归档 count=%s", count)
+    except Exception:
+        # 归档失败不能影响已发送给用户的对话，后台补档器会处理已入库记录。
+        logger.exception("对话论文静默归档失败")
+
+
 def process_message(chat_id: str, text: str) -> None:
     try:
+        from tech_news import handle_news_subscription_command
+
+        news_subscription_response = handle_news_subscription_command(chat_id, text)
+        if news_subscription_response is not None:
+            send_text_message(chat_id, news_subscription_response)
+            return
+        subscription_response = handle_subscription_command(chat_id, text)
+        if subscription_response is not None:
+            send_text_message(chat_id, subscription_response)
+            return
+
         send_text_message(chat_id, "⏳ 已收到请求，正在处理中...")
         intent = classify_intent(text)
         if _is_yuanbao_request(text) or _is_chatgpt_request(text):
@@ -511,57 +625,91 @@ def process_message(chat_id: str, text: str) -> None:
         if intent["intent"] == "paper_list":
             from paper_agent import analyze_paper
             from paper_list_agent import search_topic_papers
+            from paper_metadata import enrich_paper_metadata
+            from paper_bilingual import enrich_bilingual_fields
+            from paper_opensource import filter_open_source_large_team
 
-            papers = search_topic_papers(text, limit=4)
+            papers = filter_open_source_large_team(
+                search_topic_papers(text, limit=12)
+            )[:4]
             if not papers:
                 send_text_message(
                     chat_id,
-                    "没有检索到相关 arXiv 论文，请换一个更明确的研究主题。",
+                    "没有找到同时通过 LLM、仓库 API 与 README 三层核验的开源大团队论文，请换一个更明确的研究主题。",
                 )
                 return
 
             send_text_message(
                 chat_id,
-                f"检索到 {len(papers)} 篇相关 arXiv 论文，正在生成卡片…",
+                f"已核验 {len(papers)} 篇开源大团队论文，正在生成卡片…",
             )
+            analyzed_papers = []
             for paper in papers:
                 try:
-                    result = analyze_paper(paper)
-                    result["abstract"] = ""
-                    result["paper_url"] = (
-                        paper.get("paper_url")
-                        or paper.get("url")
-                        or result.get("paper_url", "")
+                    result = enrich_bilingual_fields(
+                        enrich_paper_metadata(
+                            _merge_verified_paper_data(
+                                paper,
+                                analyze_paper(paper),
+                            )
+                        )
                     )
                     send_card(chat_id, result)
+                    analyzed_papers.append(result)
                 except Exception:
                     logger.exception("论文列表单篇分析失败")
+            _archive_conversation_safely(papers=analyzed_papers)
             return
 
         if intent["intent"] == "paper_analysis":
             from paper_agent import analyze_paper
+            from paper_metadata import enrich_paper_metadata
+            from paper_bilingual import enrich_bilingual_fields
+            from paper_opensource import filter_open_source_large_team
             from paper_search import search_arxiv
 
-            papers = search_arxiv(text)
+            papers = filter_open_source_large_team(search_arxiv(text))
             if papers:
-                send_card(chat_id, analyze_paper(papers[0]))
+                result = enrich_bilingual_fields(
+                    enrich_paper_metadata(
+                        _merge_verified_paper_data(
+                            papers[0],
+                            analyze_paper(papers[0]),
+                        )
+                    )
+                )
+                send_card(
+                    chat_id,
+                    result,
+                )
+                _archive_conversation_safely(papers=[result])
             else:
-                send_text_message(chat_id, "没有找到相关论文")
+                send_text_message(
+                    chat_id,
+                    "找到的论文没有通过开源仓库三层核验，因此不发送推荐卡片。",
+                )
             return
 
         if intent["intent"] == "paper_daily":
             from daily_paper import daily_push
 
-            if not os.getenv("FEISHU_CHAT_ID"):
-                send_text_message(
-                    chat_id,
-                    "每日主动推送尚未配置 FEISHU_CHAT_ID。",
-                )
-                return
-            daily_push()
+            from subscriptions import get_subscription
+
+            subscription = get_subscription(chat_id, create=True)
+            daily_push(chat_id=chat_id, topics=subscription["topics"])
             return
 
-        send_text_message(chat_id, _chat_answer(text))
+        if intent["intent"] == "paper_weekly":
+            from subscriptions import get_subscription
+            from weekly_paper import weekly_push
+
+            subscription = get_subscription(chat_id, create=True)
+            weekly_push(chat_id=chat_id, topics=subscription["topics"])
+            return
+
+        answer = _chat_answer(text)
+        send_text_message(chat_id, answer)
+        _archive_conversation_safely(question=text, answer=answer)
     except Exception:
         logger.exception("后台消息处理失败 chat_id=%s", chat_id)
         try:
