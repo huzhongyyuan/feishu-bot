@@ -526,7 +526,12 @@ def _strip_chatgpt_command(text: str) -> str:
 
 
 def _chat_answer(text: str, chat_id: str = "") -> str:
-    provider = os.getenv("CHAT_PROVIDER", "auto").strip().lower()
+    from chat_memory import preferred_chat_provider
+
+    provider = preferred_chat_provider(
+        chat_id,
+        os.getenv("CHAT_PROVIDER", "auto").strip().lower(),
+    )
     yuanbao_prefixes = ("问元宝", "元宝：", "元宝:")
     explicit_yuanbao = _is_yuanbao_request(text)
     explicit_chatgpt = _is_chatgpt_request(text) and not explicit_yuanbao

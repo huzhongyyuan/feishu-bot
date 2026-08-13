@@ -36,6 +36,15 @@ def init_chat_memory() -> None:
             )
             """
         )
+        profile_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(chat_profiles)").fetchall()
+        }
+        if "preferred_provider" not in profile_columns:
+            conn.execute(
+                "ALTER TABLE chat_profiles "
+                "ADD COLUMN preferred_provider TEXT NOT NULL DEFAULT 'auto'"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_turns (
@@ -53,7 +62,12 @@ def init_chat_memory() -> None:
         )
 
 
-def set_chat_profile(chat_id: str, name: str, instructions: str) -> None:
+def set_chat_profile(
+    chat_id: str,
+    name: str,
+    instructions: str,
+    preferred_provider: str = "auto",
+) -> None:
     chat_id = str(chat_id or "").strip()
     if not chat_id:
         raise ValueError("chat_id 不能为空")
@@ -62,14 +76,22 @@ def set_chat_profile(chat_id: str, name: str, instructions: str) -> None:
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO chat_profiles (chat_id, name, instructions, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO chat_profiles
+            (chat_id, name, instructions, preferred_provider, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 name=excluded.name,
                 instructions=excluded.instructions,
+                preferred_provider=excluded.preferred_provider,
                 updated_at=excluded.updated_at
             """,
-            (chat_id, str(name).strip(), str(instructions).strip(), now),
+            (
+                chat_id,
+                str(name).strip(),
+                str(instructions).strip(),
+                str(preferred_provider or "auto").strip().casefold(),
+                now,
+            ),
         )
 
 
@@ -79,10 +101,19 @@ def get_chat_profile(chat_id: str) -> dict | None:
     init_chat_memory()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT chat_id, name, instructions FROM chat_profiles WHERE chat_id=?",
+            "SELECT chat_id, name, instructions, preferred_provider "
+            "FROM chat_profiles WHERE chat_id=?",
             (chat_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def preferred_chat_provider(chat_id: str, default: str = "auto") -> str:
+    profile = get_chat_profile(chat_id)
+    provider = str(
+        (profile or {}).get("preferred_provider") or default or "auto"
+    ).strip().casefold()
+    return provider if provider in {"auto", "glm", "yuanbao", "both"} else "auto"
 
 
 def remember_chat_turn(chat_id: str, user_text: str, assistant_text: str) -> None:

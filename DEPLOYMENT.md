@@ -122,6 +122,10 @@ most recent turns are injected into GLM, Yuanbao or ChatGPT web requests.
 `CHAT_MEMORY_CONTEXT_TURNS` controls the context window (default 6, maximum
 12). Runtime memory databases are excluded from Git.
 
+Each chat profile may also select its default provider (`auto`, `glm`,
+`yuanbao`, or `both`). Provider choice is isolated with the same chat profile;
+explicit `GPT` requests still use the ChatGPT web controller.
+
 ## Public callback
 
 For production, use a fixed ngrok domain or a named Cloudflare Tunnel. Temporary
