@@ -752,13 +752,29 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     sender_id = sender.get("sender_id") or {}
     sender_open_id = sender_id.get("open_id", "")
+    chat_id = message.get("chat_id")
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="missing chat_id")
     allowed_open_ids = {
         value.strip()
         for value in os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").split(",")
         if value.strip()
     }
-    if allowed_open_ids and sender_open_id not in allowed_open_ids:
-        logger.info("忽略非白名单用户 sender_open_id=%s", sender_open_id)
+    allowed_chat_ids = {
+        value.strip()
+        for value in os.getenv("FEISHU_ALLOWED_CHAT_IDS", "").split(",")
+        if value.strip()
+    }
+    if (
+        allowed_open_ids
+        and sender_open_id not in allowed_open_ids
+        and chat_id not in allowed_chat_ids
+    ):
+        logger.info(
+            "忽略非白名单用户 sender_open_id=%s chat_id=%s",
+            sender_open_id,
+            chat_id,
+        )
         return {"code": 0}
 
     if message.get("message_type") != "text":
@@ -774,10 +790,6 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     if not message.get("mentions"):
         return {"code": 0}
-
-    chat_id = message.get("chat_id")
-    if not chat_id:
-        raise HTTPException(status_code=400, detail="missing chat_id")
 
     try:
         text = _clean_message_text(message)

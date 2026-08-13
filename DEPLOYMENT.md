@@ -107,6 +107,15 @@ FEISHU_NEWS_CHAT_ID=oc_news_group
 If `FEISHU_NEWS_CHAT_ID` is empty, news falls back to `FEISHU_CHAT_ID` for
 backward compatibility.
 
+Access can be granted to individual users or to every member of selected
+groups. Group authorization is scoped to that group and does not grant its
+members access from other chats:
+
+```dotenv
+FEISHU_ALLOWED_OPEN_IDS=ou_owner
+FEISHU_ALLOWED_CHAT_IDS=oc_shared_group
+```
+
 ## Public callback
 
 For production, use a fixed ngrok domain or a named Cloudflare Tunnel. Temporary
