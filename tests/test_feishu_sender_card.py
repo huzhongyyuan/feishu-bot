@@ -197,3 +197,14 @@ def test_unverified_open_source_paper_is_not_sent(monkeypatch):
                 }
             ),
         )
+
+
+def test_paper_button_identifies_arxiv_link():
+    assert (
+        feishu_sender.paper_link_label("https://arxiv.org/abs/2603.16666")
+        == "📄 arXiv 链接"
+    )
+    assert (
+        feishu_sender.paper_link_label("https://openaccess.thecvf.com/paper")
+        == "📄 官方论文页"
+    )

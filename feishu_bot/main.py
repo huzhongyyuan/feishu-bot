@@ -14,6 +14,7 @@ from event_db import init_event_db, seen_or_save
 from glm_client import call_glm
 from subscriptions import handle_subscription_command, init_subscriptions
 from feishu_text import format_latex_for_feishu
+from feishu_sender import paper_link_label
 
 
 load_dotenv()
@@ -356,7 +357,7 @@ def send_card(chat_id, data):
                 "tag": "button",
                 "text": {
                     "tag": "plain_text",
-                    "content": "📄 阅读论文"
+                    "content": paper_link_label(paper_url),
                 },
                 "type": "primary",
                 "url": paper_url

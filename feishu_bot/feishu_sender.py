@@ -1,10 +1,19 @@
 import json
 import os
 import requests
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from feishu_text import format_latex_for_feishu
 
 load_dotenv()
+
+
+def paper_link_label(url: object) -> str:
+    """Label arXiv URLs explicitly without mislabelling conference pages."""
+    hostname = (urlparse(str(url or "").strip()).hostname or "").casefold()
+    if hostname == "arxiv.org" or hostname.endswith(".arxiv.org"):
+        return "📄 arXiv 链接"
+    return "📄 官方论文页"
 
 
 def compact_card_text(value, limit=220):
@@ -560,7 +569,10 @@ def send_message(chat_id, text):
     if paper_url:
         actions.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "📄 阅读论文"},
+            "text": {
+                "tag": "plain_text",
+                "content": paper_link_label(paper_url),
+            },
             "type": "primary",
             "url": paper_url,
         })
