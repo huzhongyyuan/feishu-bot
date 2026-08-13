@@ -116,6 +116,12 @@ FEISHU_ALLOWED_OPEN_IDS=ou_owner
 FEISHU_ALLOWED_CHAT_IDS=oc_shared_group
 ```
 
+Conversational memory is stored in `data/chat_memory.db` and partitioned by
+Feishu `chat_id`. Each group can have a separate role profile, and only its
+most recent turns are injected into GLM, Yuanbao or ChatGPT web requests.
+`CHAT_MEMORY_CONTEXT_TURNS` controls the context window (default 6, maximum
+12). Runtime memory databases are excluded from Git.
+
 ## Public callback
 
 For production, use a fixed ngrok domain or a named Cloudflare Tunnel. Temporary

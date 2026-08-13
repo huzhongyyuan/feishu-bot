@@ -525,7 +525,7 @@ def _strip_chatgpt_command(text: str) -> str:
     return stripped
 
 
-def _chat_answer(text: str) -> str:
+def _chat_answer(text: str, chat_id: str = "") -> str:
     provider = os.getenv("CHAT_PROVIDER", "auto").strip().lower()
     yuanbao_prefixes = ("问元宝", "元宝：", "元宝:")
     explicit_yuanbao = _is_yuanbao_request(text)
@@ -540,28 +540,34 @@ def _chat_answer(text: str) -> str:
 
     if explicit_chatgpt:
         from chatgpt_agent import ChatGPTWebError, ask_chatgpt
+        from chat_memory import build_memory_prompt
 
         try:
-            answer = ask_chatgpt(_strip_chatgpt_command(text))
+            answer = ask_chatgpt(
+                build_memory_prompt(chat_id, _strip_chatgpt_command(text))
+            )
             return "【ChatGPT 网页】\n\n" + answer
         except ChatGPTWebError as exc:
             logger.warning("ChatGPT 网页调用不可用: %s", exc)
             return f"【ChatGPT 网页】\n\n{exc}"
 
     use_yuanbao = provider in {"yuanbao", "both"} or explicit_yuanbao
+    from chat_memory import build_memory_prompt
+
+    memory_question = build_memory_prompt(chat_id, question)
     if not use_yuanbao:
-        return call_glm(question)
+        return call_glm(memory_question)
 
     try:
         from yuanbao_agent import ask_yuanbao
 
-        yuanbao_answer = ask_yuanbao(question)
+        yuanbao_answer = ask_yuanbao(memory_question)
     except Exception:
         logger.exception("元宝调用失败，回退 GLM")
-        return "元宝暂时不可用，已切换 GLM：\n\n" + call_glm(question)
+        return "元宝暂时不可用，已切换 GLM：\n\n" + call_glm(memory_question)
 
     if provider == "both" and not explicit_yuanbao:
-        glm_answer = call_glm(question)
+        glm_answer = call_glm(memory_question)
         return (
             "【元宝】\n"
             + yuanbao_answer
@@ -708,8 +714,11 @@ def process_message(chat_id: str, text: str) -> None:
             weekly_push(chat_id=chat_id, topics=subscription["topics"])
             return
 
-        answer = _chat_answer(text)
+        answer = _chat_answer(text, chat_id=chat_id)
         send_text_message(chat_id, answer)
+        from chat_memory import remember_chat_turn
+
+        remember_chat_turn(chat_id, text, answer)
         _archive_conversation_safely(question=text, answer=answer)
     except Exception:
         logger.exception("后台消息处理失败 chat_id=%s", chat_id)
