@@ -228,6 +228,15 @@ def test_news_subscription_commands_and_schedule(tmp_path, monkeypatch):
     ) == 1
 
 
+def test_default_news_group_can_differ_from_paper_group(tmp_path, monkeypatch):
+    monkeypatch.setattr(tech_news, "DB_PATH", tmp_path / "news.db")
+    monkeypatch.setenv("FEISHU_CHAT_ID", "oc_papers")
+    monkeypatch.setenv("FEISHU_NEWS_CHAT_ID", "oc_news")
+    tech_news.ensure_default_news_subscription()
+    assert tech_news.get_news_subscription("oc_news", create=False) is not None
+    assert tech_news.get_news_subscription("oc_papers", create=False) is None
+
+
 def test_digest_contains_direct_links(monkeypatch):
     captured = {}
 

@@ -97,6 +97,16 @@ Optional alphaXiv discovery is enabled with `ALPHAXIV_API_KEY`. The key belongs
 only in `feishu_bot/.env`; never commit it. alphaXiv results are treated as a
 discovery signal and are resolved through arXiv again before recommendation.
 
+AI news may be delivered to a different group from paper recommendations:
+
+```dotenv
+FEISHU_CHAT_ID=oc_paper_group
+FEISHU_NEWS_CHAT_ID=oc_news_group
+```
+
+If `FEISHU_NEWS_CHAT_ID` is empty, news falls back to `FEISHU_CHAT_ID` for
+backward compatibility.
+
 ## Public callback
 
 For production, use a fixed ngrok domain or a named Cloudflare Tunnel. Temporary

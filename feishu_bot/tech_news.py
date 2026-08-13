@@ -227,7 +227,12 @@ def get_news_subscription(chat_id: str, *, create: bool = True) -> dict | None:
 
 
 def ensure_default_news_subscription() -> None:
-    chat_id = os.getenv("FEISHU_CHAT_ID", "").strip()
+    # News can target a different group from the paper bot. Keep the legacy
+    # FEISHU_CHAT_ID fallback for existing installations.
+    chat_id = (
+        os.getenv("FEISHU_NEWS_CHAT_ID", "").strip()
+        or os.getenv("FEISHU_CHAT_ID", "").strip()
+    )
     if chat_id:
         get_news_subscription(chat_id, create=True)
 
