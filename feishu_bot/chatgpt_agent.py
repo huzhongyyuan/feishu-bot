@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import fcntl
 import os
 import re
 import threading
@@ -235,7 +238,11 @@ def _wait_for_answer(page, previous_count: int, timeout_seconds: int) -> str:
     raise ChatGPTWebError("等待 ChatGPT 回答超时，请稍后重试。")
 
 
-def ask_chatgpt(question: str) -> str:
+def ask_chatgpt(
+    question: str,
+    *,
+    timeout: int | float | None = None,
+) -> str:
     question = question.strip()
     if not question:
         raise ChatGPTWebError("请在 GPT 后面填写问题。")
@@ -248,10 +255,26 @@ def ask_chatgpt(question: str) -> str:
     ).strip()
     timeout_seconds = max(
         30,
-        int(os.getenv("CHATGPT_ANSWER_TIMEOUT_SECONDS", "180")),
+        int(
+            timeout
+            if timeout is not None
+            else os.getenv("CHATGPT_ANSWER_TIMEOUT_SECONDS", "180")
+        ),
     )
+    process_lock = None
 
     try:
+        lock_path = os.getenv(
+            "CHATGPT_BROWSER_LOCK_FILE",
+            "/tmp/hzy-feishu-chatgpt-browser.lock",
+        )
+        process_lock = open(lock_path, "a+", encoding="utf-8")
+        try:
+            fcntl.flock(process_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ChatGPTWebError(
+                "ChatGPT 正在回答另一条消息，请稍后重试。"
+            ) from exc
         with sync_playwright() as playwright:
             try:
                 browser = playwright.chromium.connect_over_cdp(
@@ -281,4 +304,9 @@ def ask_chatgpt(question: str) -> str:
     except Exception as exc:
         raise ChatGPTWebError("ChatGPT 网页调用失败，请检查服务器日志。") from exc
     finally:
+        if process_lock is not None:
+            try:
+                fcntl.flock(process_lock.fileno(), fcntl.LOCK_UN)
+            finally:
+                process_lock.close()
         _REQUEST_LOCK.release()

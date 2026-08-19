@@ -1,8 +1,13 @@
 {
   "domains": [
     "数字人生成",
+    "Digital Human / Virtual Human / Avatar",
     "Human Motion Generation",
     "Motion Generation",
+    "Embodied AI",
+    "Vision-Language-Action",
+    "Robot Learning",
+    "Agent Systems / Harness Engineering / AI Infrastructure",
     "World Model",
     "Video Generation",
     "Multimodal Learning",
@@ -14,9 +19,12 @@
     "Spherical Video"
   ],
   "sources": [
+    "arXiv cs.CV/cs.AI/cs.LG/cs.CL/cs.RO/cs.CR",
     "HuggingFace Daily Papers",
     "alphaXiv Discover Papers",
-    "arXiv cs.CV",
+    "Major AI labs official research pages and RSS",
+    "Major AI labs official GitHub repositories and technical reports",
+    "CVPR/ICML/SIGGRAPH official proceedings",
     "OpenReview",
     "Semantic Scholar"
   ],

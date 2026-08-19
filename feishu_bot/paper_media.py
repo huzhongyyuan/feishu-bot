@@ -19,6 +19,7 @@ CACHE_DIR = Path("data/paper_media")
 MAX_PDF_BYTES = 96 * 1024 * 1024
 MAX_PDF_DOWNLOAD_SECONDS = 300
 MAX_FIGURE_SCAN_PAGES = 12
+MAX_FIGURE_FALLBACK_PAGES = 40
 TEASER_ASPECT_RATIO = 2.0
 CAPTION_PATTERN = re.compile(
     r"(?:^|\n)\s*(?:figure|fig\.?)\s*(\d+)\s*(?:[.:]|\s)",
@@ -42,6 +43,8 @@ ARCHITECTURE_KEYWORDS = {
     "correspondence": 5,
     "design": 5,
     "attention": 4,
+    "adapter": 10,
+    "lifecycle": 10,
 }
 NON_ARCHITECTURE_KEYWORDS = {
     "qualitative": 12,
@@ -76,6 +79,8 @@ STRONG_ARCHITECTURE_KEYWORDS = {
     "method",
     "compression",
     "correspondence",
+    "adapter",
+    "lifecycle",
 }
 MIN_ARCHITECTURE_SCORE = 8
 EXPLICIT_ARCHITECTURE_KEYWORDS = {
@@ -87,6 +92,11 @@ EXPLICIT_ARCHITECTURE_KEYWORDS = {
     "system diagram",
     "method overview",
     "model overview",
+    "runtime adapter",
+    "source-to-sink path",
+    "assessment workflow",
+    "component lifecycle",
+    "lifecycle with transitions",
 }
 METHOD_CONTEXT_KEYWORDS = {
     "architecture",
@@ -164,6 +174,7 @@ TRUSTED_PDF_HOSTS = {
     "openreview.net",
     "proceedings.mlr.press",
     "icml.cc",
+    "raw.githubusercontent.com",
 }
 
 
@@ -287,7 +298,7 @@ def _caption_candidates(page: fitz.Page, page_index: int) -> list[dict]:
         caption = str(candidate.get("caption") or "")
         strict = bool(
             re.match(
-                rf"\s*(?:figure|fig\.?)\s*{number}\s*[.:]",
+                rf"\s*(?:figure|fig\.?)\s*{number}\s*[.:|]",
                 caption,
                 re.I,
             )
@@ -419,6 +430,16 @@ def _find_complete_figure_crop(page: fitz.Page, figure: dict) -> fitz.Rect | Non
                 page_rect.x1 - 14,
                 page_rect.y1,
             )
+        elif not parallel_caption:
+            # A short centered caption can be narrower than its diagram and be
+            # mistaken for a right-column caption. Expand to the verified
+            # drawing bounds so the left/right nodes are not shaved off.
+            scope = fitz.Rect(
+                max(page_rect.x0 + 14, min(scope.x0, graphic_left - 8)),
+                scope.y0,
+                min(page_rect.x1 - 14, max(scope.x1, graphic_right + 8)),
+                scope.y1,
+            )
     graphics = []
     for rect in all_graphics:
         if rect.y0 < boundary - 4 or rect.y0 >= caption.y0 + 5:
@@ -446,7 +467,8 @@ def _find_complete_figure_crop(page: fitz.Page, figure: dict) -> fitz.Rect | Non
 
 def _scan_figures(document: fitz.Document) -> list[dict]:
     figures = []
-    for page_index in range(min(document.page_count, MAX_FIGURE_SCAN_PAGES)):
+    initial_pages = min(document.page_count, MAX_FIGURE_SCAN_PAGES)
+    for page_index in range(initial_pages):
         page = document.load_page(page_index)
         for candidate in _caption_candidates(page, page_index):
             crop = _find_complete_figure_crop(page, candidate)
@@ -454,6 +476,21 @@ def _scan_figures(document: fitz.Document) -> list[dict]:
                 continue
             candidate["crop"] = crop
             figures.append(candidate)
+    # Long technical reports often place diagrams after a substantial theory
+    # section. Only widen the scan when the fast pass cannot supply both card
+    # images, keeping ordinary paper extraction inexpensive.
+    if len(figures) < 2 and document.page_count > initial_pages:
+        for page_index in range(
+            initial_pages,
+            min(document.page_count, MAX_FIGURE_FALLBACK_PAGES),
+        ):
+            page = document.load_page(page_index)
+            for candidate in _caption_candidates(page, page_index):
+                crop = _find_complete_figure_crop(page, candidate)
+                if crop is None:
+                    continue
+                candidate["crop"] = crop
+                figures.append(candidate)
     # A results paragraph can start with “Figure N presents ...” on the page
     # before the actual figure. Keep it only as a fallback: whenever a formal
     # “Figure N.” / “Figure N:” caption exists, bind the figure number to that
@@ -573,6 +610,24 @@ def _architecture_score(figure: dict) -> int:
     return score
 
 
+def _is_primary_architecture_caption(figure: dict) -> bool:
+    caption = str(figure.get("caption") or "").casefold()
+    return any(
+        phrase in caption
+        for phrase in (
+            "network architecture",
+            "model architecture",
+            "method overview",
+            "framework overview",
+            "overall framework",
+            "training pipeline",
+            "runtime adapter",
+            "source-to-sink path",
+            "lifecycle with transitions",
+        )
+    )
+
+
 def _caption_component_score(figure: dict) -> int:
     caption = str(figure.get("caption") or "").casefold()
     return sum(1 for keyword in MODULE_CONTEXT_KEYWORDS if keyword in caption)
@@ -596,11 +651,71 @@ def _is_architecture_figure(figure: dict) -> bool:
     )
 
 
+def _is_two_figure_nonstandard_architecture(figure: dict, figures: list[dict]) -> bool:
+    """Accept an unpunctuated caption only when the PDF provides strong evidence.
+
+    Some camera-ready PDFs use ``Figure 2 The ...`` rather than ``Figure 2.``.
+    Keeping this exception limited to two-figure papers with a diagram-like
+    crop and multiple named components prevents prose references such as
+    ``Figure 3 presents ...`` from filling the architecture slot.
+    """
+    if len(figures) != 2 or int(figure.get("caption_confidence") or 0) != 1:
+        return False
+    caption = str(figure.get("caption") or "").casefold()
+    number = int(figure.get("number") or 0)
+    if not re.match(rf"\s*(?:figure|fig\.?)\s*{number}\s+", caption, re.I):
+        return False
+    negative = sum(
+        weight for keyword, weight in NON_ARCHITECTURE_KEYWORDS.items() if keyword in caption
+    )
+    return (
+        int(figure.get("structure_score") or 0) >= 8
+        and _caption_component_score(figure) >= 3
+        and negative < 12
+        and _architecture_score(figure) >= 18
+    )
+
+
+def _is_explicit_unpunctuated_architecture(figure: dict) -> bool:
+    """Accept a caption such as ``Figure 2 Training pipeline ...`` safely.
+
+    Camera-ready papers occasionally omit the punctuation after the figure
+    number.  Requiring an architecture phrase immediately after that number,
+    plus strong diagram structure, keeps body prose references from being
+    mistaken for figures while supporting otherwise valid method captions.
+    """
+    if int(figure.get("caption_confidence") or 0) != 1:
+        return False
+    caption = str(figure.get("caption") or "").casefold()
+    number = int(figure.get("number") or 0)
+    match = re.match(
+        rf"\s*(?:figure|fig\.?)\s*{number}\s+([^.]{{0,100}})",
+        caption,
+        re.I,
+    )
+    if not match:
+        return False
+    opening = match.group(1)
+    explicit = any(keyword in opening for keyword in EXPLICIT_ARCHITECTURE_KEYWORDS)
+    negative = sum(
+        weight for keyword, weight in NON_ARCHITECTURE_KEYWORDS.items() if keyword in caption
+    )
+    return (
+        explicit
+        and int(figure.get("structure_score") or 0) >= 8
+        and negative < 12
+        and _architecture_score(figure) >= 18
+    )
+
+
 def _teaser_score(figure: dict) -> int:
     caption = str(figure.get("caption") or "").casefold()
     score = sum(weight for keyword, weight in TEASER_KEYWORDS.items() if keyword in caption)
     if int(figure.get("number") or 0) == 1:
-        score += 7
+        # The card's homepage image follows the paper's first figure unless it
+        # is itself the selected architecture.  This avoids replacing a real
+        # Figure 1 teaser with a later qualitative-comparison grid.
+        score += 20
     if int(figure.get("caption_confidence") or 0) >= 2:
         score += 5
     return score
@@ -615,12 +730,19 @@ def _select_teaser_and_architecture(figures: list[dict]) -> list[tuple[str, dict
         if int(figure.get("caption_confidence") or 0) >= 2
     ]
     pool = formal or figures
-    architecture_candidates = [figure for figure in pool if _is_architecture_figure(figure)]
+    architecture_candidates = [
+        figure
+        for figure in pool
+        if _is_architecture_figure(figure)
+        or _is_explicit_unpunctuated_architecture(figure)
+        or _is_two_figure_nonstandard_architecture(figure, figures)
+    ]
     if not architecture_candidates:
         return []
     architecture = max(
         architecture_candidates,
         key=lambda value: (
+            _is_primary_architecture_caption(value),
             _architecture_score(value),
             -int(value.get("number") or 99),
         ),

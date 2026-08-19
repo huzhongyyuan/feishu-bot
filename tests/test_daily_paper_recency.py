@@ -64,3 +64,24 @@ def test_institution_reputation_does_not_override_large_quality_gap():
         "repo_stars": 0,
     }
     assert daily_paper._recommendation_priority(strong_ordinary) > daily_paper._recommendation_priority(weak_major_lab)
+
+
+def test_push_time_selects_distinct_morning_and_evening_tracks():
+    assert daily_paper.recommendation_track_for_time("08:00") == "major_impact"
+    assert daily_paper.recommendation_track_for_time("20:00") == "focus_topics"
+
+
+def test_evening_track_prefers_focus_paper():
+    general = {
+        "title": "General Language Model Optimization",
+        "summary": "A compiler optimization for language models.",
+        "score": 9.4,
+        "institution_impact_tier": 3,
+    }
+    focus = {
+        "title": "Streaming Human Motion Generation",
+        "summary": "A real-time motion synthesis model.",
+        "score": 8.8,
+        "institution_impact_tier": 2,
+    }
+    assert daily_paper._track_priority(focus, "focus_topics") > daily_paper._track_priority(general, "focus_topics")

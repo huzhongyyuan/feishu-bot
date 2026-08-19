@@ -11,16 +11,20 @@ from zoneinfo import ZoneInfo
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "subscriptions.db"
 DEFAULT_TOPICS = [
+    "数字人",
+    "Motion Generation",
+    "具身智能",
     "世界模型",
     "视频生成",
     "人体动作",
     "全景相机",
     "全景视频",
 ]
-DEFAULT_PUSH_TIMES = ["07:00", "20:00"]
+DEFAULT_PUSH_TIMES = ["08:00", "20:00"]
 DEFAULT_WEEKLY_PUSH_WEEKDAY = 0  # Monday
 DEFAULT_WEEKLY_PUSH_TIME = "09:00"
 WEEKLY_RETRY_HOURS = 6
+DAILY_RETRY_MINUTES = 60
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -78,6 +82,18 @@ def init_subscriptions() -> None:
                 run_date TEXT NOT NULL,
                 push_time TEXT NOT NULL,
                 completed_at TEXT NOT NULL,
+                PRIMARY KEY (chat_id, run_date, push_time)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS daily_subscription_attempts (
+                chat_id TEXT NOT NULL,
+                run_date TEXT NOT NULL,
+                push_time TEXT NOT NULL,
+                attempted_at TEXT NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (chat_id, run_date, push_time)
             )
             """
@@ -270,6 +286,13 @@ def due_subscriptions(now: datetime | None = None) -> list[dict]:
                 (today,),
             ).fetchall()
         }
+        attempts = {
+            (row["chat_id"], row["push_time"]): dict(row)
+            for row in conn.execute(
+                "SELECT * FROM daily_subscription_attempts WHERE run_date=?",
+                (today,),
+            ).fetchall()
+        }
     result = []
     for row in rows:
         item = dict(row)
@@ -286,6 +309,16 @@ def due_subscriptions(now: datetime | None = None) -> list[dict]:
                 continue
             if (item["chat_id"], push_time) in completed:
                 continue
+            attempt = attempts.get((item["chat_id"], push_time))
+            if attempt and attempt.get("attempted_at"):
+                try:
+                    attempted_at = datetime.fromisoformat(attempt["attempted_at"])
+                except ValueError:
+                    attempted_at = None
+                if attempted_at and current - attempted_at < timedelta(
+                    minutes=DAILY_RETRY_MINUTES
+                ):
+                    continue
             due = dict(item)
             due["topics"] = json.loads(due["topics"])
             due["push_times"] = push_times
@@ -319,7 +352,56 @@ def mark_pushed(
                     datetime.now(SHANGHAI).isoformat(timespec="seconds"),
                 ),
             )
+            conn.execute(
+                """
+                DELETE FROM daily_subscription_attempts
+                WHERE chat_id=? AND run_date=? AND push_time=?
+                """,
+                (chat_id, value, push_time),
+            )
     update_subscription(chat_id, last_push_date=value)
+
+
+def mark_daily_attempt(
+    chat_id: str,
+    push_time: str,
+    date_value: str | None = None,
+) -> None:
+    init_subscriptions()
+    run_date = date_value or datetime.now(SHANGHAI).strftime("%Y-%m-%d")
+    normalized_time = _normalize_push_times([push_time])[0]
+    now = datetime.now(SHANGHAI).isoformat(timespec="seconds")
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO daily_subscription_attempts
+            (chat_id, run_date, push_time, attempted_at, error)
+            VALUES (?, ?, ?, ?, '')
+            ON CONFLICT(chat_id, run_date, push_time) DO UPDATE SET
+                attempted_at=excluded.attempted_at, error=''
+            """,
+            (chat_id, run_date, normalized_time, now),
+        )
+
+
+def mark_daily_failed(
+    chat_id: str,
+    push_time: str,
+    error: str,
+    date_value: str | None = None,
+) -> None:
+    init_subscriptions()
+    run_date = date_value or datetime.now(SHANGHAI).strftime("%Y-%m-%d")
+    normalized_time = _normalize_push_times([push_time])[0]
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE daily_subscription_attempts
+            SET error=?
+            WHERE chat_id=? AND run_date=? AND push_time=?
+            """,
+            (str(error)[:1000], chat_id, run_date, normalized_time),
+        )
 
 
 def due_weekly_subscriptions(

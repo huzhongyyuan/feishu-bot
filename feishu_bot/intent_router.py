@@ -39,27 +39,56 @@ def classify_intent(text: str) -> dict:
             "confidence": 1.0,
         }
 
-    # 在该机器人中，“推荐/调研/有哪些/相关工作”默认指论文。
-    list_words = [
+    # “推荐/有哪些/调研”也大量用于美食、旅行和购物，不能单独作为
+    # 论文意图。只有同时出现明确的论文/学术来源上下文时才进入论文流程。
+    paper_context_words = [
+        "论文",
+        "文献",
+        "paper",
+        "arxiv",
+        "顶会",
+        "期刊",
+        "会议论文",
+        "cvpr",
+        "iccv",
+        "eccv",
+        "icml",
+        "neurips",
+        "iclr",
+        "siggraph",
+        "acl",
+        "aaai",
+        "survey",
+        "related work",
+        "literature review",
+    ]
+    list_actions = [
         "推荐一些",
         "推荐几篇",
         "推荐一篇",
         "有哪些",
-        "相关论文",
-        "相关工作",
-        "文献推荐",
-        "论文推荐",
+        "推荐",
         "调研",
         "研究现状",
         "研究进展",
         "最新进展",
         "技术路线",
+    ]
+    explicit_paper_list_words = [
+        "相关论文",
+        "相关工作",
+        "文献推荐",
+        "论文推荐",
         "survey",
         "related work",
         "literature review",
     ]
 
-    if any(word in lower for word in list_words):
+    has_paper_context = any(word in lower for word in paper_context_words)
+    has_list_action = any(word in lower for word in list_actions)
+    if any(word in lower for word in explicit_paper_list_words) or (
+        has_paper_context and has_list_action
+    ):
         return {
             "intent": "paper_list",
             "is_paper_related": True,

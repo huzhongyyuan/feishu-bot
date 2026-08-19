@@ -138,10 +138,13 @@ def _append_reference_links(
     return answer.rstrip() + "\n\n参考链接\n\n" + "\n\n".join(rows)
 
 
-def _wait_for_answer(page) -> str:
-    deadline = time.monotonic() + float(
-        os.getenv("YUANBAO_ANSWER_TIMEOUT_SECONDS", "90")
+def _wait_for_answer(page, timeout: int | float | None = None) -> str:
+    timeout_seconds = (
+        float(timeout)
+        if timeout is not None
+        else float(os.getenv("YUANBAO_ANSWER_TIMEOUT_SECONDS", "90"))
     )
+    deadline = time.monotonic() + timeout_seconds
     previous = ""
     stable_checks = 0
 
@@ -262,7 +265,12 @@ def _configure_model(page) -> tuple[str, bool]:
     return model_id, is_deep_thinking
 
 
-def ask_yuanbao(question: str) -> str:
+def ask_yuanbao(
+    question: str,
+    *,
+    raw: bool = False,
+    timeout: int | float | None = None,
+) -> str:
     state_file = Path(
         os.getenv(
             "YUANBAO_STATE_FILE",
@@ -291,12 +299,18 @@ def ask_yuanbao(question: str) -> str:
                 for link in _page_links(page)
                 if link.get("href")
             }
-            submitted_question = _answer_prompt(question)
+            submitted_question = question.rstrip() if raw else _answer_prompt(question)
             box.fill(submitted_question)
             box.press("Enter")
-            answer = _wait_for_answer(page)
-            links = _new_reference_links(before_hrefs, _page_links(page))
-            answer = _append_reference_links(answer, links)
+            answer = _wait_for_answer(page, timeout=timeout)
+            if not raw:
+                links = _new_reference_links(before_hrefs, _page_links(page))
+                answer = _append_reference_links(answer, links)
+            # Yuanbao may rotate or refresh authentication cookies while the
+            # browser is in use. Persist the refreshed state after every
+            # successful request so the scheduled jobs do not keep loading an
+            # increasingly stale one-time login snapshot.
+            context.storage_state(path=str(state_file))
             max_chars = int(os.getenv("YUANBAO_MAX_ANSWER_CHARS", "12000"))
             return answer[:max_chars]
         except PlaywrightTimeoutError as exc:

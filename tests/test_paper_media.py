@@ -191,6 +191,100 @@ def test_prose_figure_reference_is_not_selected_as_architecture():
     ]
 
 
+def test_two_unpunctuated_captions_can_supply_strong_architecture_diagram():
+    figures = [
+        {
+            "number": 1,
+            "page_index": 1,
+            "caption_confidence": 1,
+            "structure_score": 7,
+            "method_reference_score": 3,
+            "caption": "Figure 1 Two examples of time-aligned world events.",
+        },
+        {
+            "number": 2,
+            "page_index": 2,
+            "caption_confidence": 1,
+            "structure_score": 11,
+            "method_reference_score": 2,
+            "caption": (
+                "Figure 2 The world context is tokenized before streaming. "
+                "Language, audio, and video inputs and outputs share a causal "
+                "timeline coordinated by block-causal attention."
+            ),
+        },
+    ]
+
+    selected = _select_teaser_and_architecture(figures)
+
+    assert [(kind, figure["number"]) for kind, figure in selected] == [
+        ("teaser", 1),
+        ("architecture", 2),
+    ]
+
+
+def test_two_figure_prose_reference_still_cannot_fill_architecture_slot():
+    figures = [
+        {
+            "number": 1,
+            "page_index": 0,
+            "caption_confidence": 2,
+            "structure_score": 0,
+            "caption": "Figure 1. Examples from the benchmark.",
+        },
+        {
+            "number": 2,
+            "page_index": 4,
+            "caption_confidence": 1,
+            "structure_score": 2,
+            "method_reference_score": 1,
+            "caption": (
+                "Figure 2 presents frames from generated clips with emotion "
+                "descriptions and smiling dynamics."
+            ),
+        },
+    ]
+
+    assert _select_teaser_and_architecture(figures) == []
+
+
+def test_unpunctuated_training_pipeline_is_accepted_without_replacing_figure_one_teaser():
+    figures = [
+        {
+            "number": 1,
+            "page_index": 0,
+            "caption_confidence": 1,
+            "structure_score": 9,
+            "caption": "Figure 1 We propose an interactive video world model.",
+        },
+        {
+            "number": 2,
+            "page_index": 3,
+            "caption_confidence": 1,
+            "structure_score": 15,
+            "method_reference_score": 4,
+            "caption": (
+                "Figure 2 Training pipeline of the model. The frozen base model "
+                "generates clips and the training process conditions the DiT."
+            ),
+        },
+        {
+            "number": 5,
+            "page_index": 7,
+            "caption_confidence": 1,
+            "structure_score": 10,
+            "caption": "Figure 5 Qualitative comparison with baseline methods.",
+        },
+    ]
+
+    selected = _select_teaser_and_architecture(figures)
+
+    assert [(kind, figure["number"]) for kind, figure in selected] == [
+        ("teaser", 1),
+        ("architecture", 2),
+    ]
+
+
 def test_performance_graph_cannot_fill_architecture_slot():
     figures = [
         {
@@ -211,3 +305,36 @@ def test_performance_graph_cannot_fill_architecture_slot():
     ]
 
     assert _select_teaser_and_architecture(figures) == []
+
+
+def test_pipe_delimited_security_paper_uses_workflow_teaser_and_runtime_adapter():
+    figures = [
+        {
+            "number": 1,
+            "page_index": 0,
+            "caption_confidence": 2,
+            "structure_score": 0,
+            "caption": "Figure 1 | Assessment workflow for the agent harness.",
+        },
+        {
+            "number": 3,
+            "page_index": 4,
+            "caption_confidence": 2,
+            "structure_score": 0,
+            "caption": "Figure 3 | Runtime adapter for the agent harness.",
+        },
+        {
+            "number": 6,
+            "page_index": 8,
+            "caption_confidence": 2,
+            "structure_score": 10,
+            "caption": "Figure 6 | Overall attack results and success-rate chart.",
+        },
+    ]
+
+    selected = _select_teaser_and_architecture(figures)
+
+    assert [(kind, figure["number"]) for kind, figure in selected] == [
+        ("teaser", 1),
+        ("architecture", 3),
+    ]

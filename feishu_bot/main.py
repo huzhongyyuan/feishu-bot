@@ -93,6 +93,7 @@ def send_card(chat_id, data):
     abstract = format_latex_for_feishu(data.get("abstract"))
     abstract_zh = format_latex_for_feishu(data.get("abstract_zh") or "")
     paper_url = str(data.get("paper_url") or data.get("url") or "")
+    venue_link = f"[{venue}]({paper_url})" if paper_url else venue
     code_url = str(data.get("code_url") or "")
     project_url = str(data.get("project_url") or "")
 
@@ -186,7 +187,7 @@ def send_card(chat_id, data):
                 "tag": "lark_md",
                 "content": (
                     f"⭐ **{score_text}**"
-                    f"　　🏷 {venue}"
+                    f"　　🏷 {venue_link}"
                 )
             }
         },
@@ -499,6 +500,16 @@ def _is_yuanbao_request(text: str) -> bool:
     return "元宝" in text
 
 
+def _is_chat_only_group(chat_id: str) -> bool:
+    """Return whether this group must bypass every paper intent route."""
+    chat_only_ids = {
+        value.strip()
+        for value in os.getenv("FEISHU_CHAT_ONLY_CHAT_IDS", "").split(",")
+        if value.strip()
+    }
+    return str(chat_id or "").strip() in chat_only_ids
+
+
 def _is_chatgpt_request(text: str) -> bool:
     return "gpt" in text.lower()
 
@@ -641,18 +652,25 @@ def process_message(chat_id: str, text: str) -> None:
     try:
         from tech_news import handle_news_subscription_command
 
+        chat_only_group = _is_chat_only_group(chat_id)
         news_subscription_response = handle_news_subscription_command(chat_id, text)
         if news_subscription_response is not None:
             send_text_message(chat_id, news_subscription_response)
             return
-        subscription_response = handle_subscription_command(chat_id, text)
+        subscription_response = (
+            None if chat_only_group else handle_subscription_command(chat_id, text)
+        )
         if subscription_response is not None:
             send_text_message(chat_id, subscription_response)
             return
 
         send_text_message(chat_id, "⏳ 已收到请求，正在处理中...")
         intent = classify_intent(text)
-        if _is_yuanbao_request(text) or _is_chatgpt_request(text):
+        if (
+            chat_only_group
+            or _is_yuanbao_request(text)
+            or _is_chatgpt_request(text)
+        ):
             intent = {"intent": "chat"}
         logger.info("处理消息 chat_id=%s intent=%s", chat_id, intent["intent"])
 
@@ -853,4 +871,18 @@ def health():
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - SERVICE_START_TIME, 1),
+    }
+
+
+@app.get("/health/papers")
+def paper_pipeline_health():
+    """Operational snapshot without credentials or private chat identifiers."""
+    from paper_candidate_pool import pool_summary
+    from source_health import health_snapshot
+
+    sources = health_snapshot()
+    return {
+        "status": "ok" if all(item["ok"] for item in sources) else "degraded",
+        "candidate_pool": pool_summary(),
+        "sources": sources,
     }

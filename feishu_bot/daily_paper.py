@@ -1,5 +1,5 @@
 from feishu_sender import send_message as send_feishu_message
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 from paper_db import (
     get_delivered_titles,
     init_db,
@@ -26,6 +26,13 @@ PANORAMA_QUERY = (
     '(all:"panoramic camera" OR all:"omnidirectional camera" OR '
     'all:"360-degree video" OR all:"360 video" OR all:"spherical video" OR '
     'all:"equirectangular video" OR all:"equirectangular projection")'
+)
+MAJOR_AI_QUERY = (
+    '(all:"OpenAI" OR all:"Anthropic" OR all:"DeepSeek" OR all:"DeepMind" OR '
+    'all:"Google" OR all:"Meta" OR all:"Microsoft" OR all:"NVIDIA" OR '
+    'all:"Adobe" OR all:"Apple" OR all:"Amazon" OR all:"ByteDance" OR '
+    'all:"Tencent" OR all:"Alibaba" OR all:"Baidu" OR all:"Salesforce") AND '
+    '(cat:cs.AI OR cat:cs.CL OR cat:cs.CV OR cat:cs.LG OR cat:cs.RO OR cat:cs.CR)'
 )
 PANORAMA_MARKERS = (
     "panorama",
@@ -54,6 +61,11 @@ OPEN_SOURCE_FIELDS = (
     "institution_impact_label",
     "institution_impact_evidence",
 )
+def get_official_tech_reports() -> list[dict]:
+    """Return reports verified through generic first-party cross-links."""
+    from official_report_source import discover_official_reports
+
+    return discover_official_reports(get=requests.get)
 
 
 def published_within_lookback(paper, days=RECENT_LOOKBACK_DAYS):
@@ -80,12 +92,12 @@ def parse_json_object(value):
             text = text[:-3].strip()
 
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}")
         if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start:end + 1], strict=False)
         raise
 
 
@@ -283,14 +295,24 @@ def get_arxiv_daily():
 
 
 def get_daily_papers():
+    from source_health import track_source
 
     papers=[]
 
-    papers.extend(
-        get_arxiv_daily()
-    )
+    for source_name, fetch in (
+        ("official_reports", get_official_tech_reports),
+        ("arxiv_rss", get_arxiv_daily),
+    ):
+        try:
+            papers.extend(track_source(source_name, fetch, require_nonempty=True))
+        except Exception as exc:
+            print(f"{source_name} 来源不可用，继续使用候选池: {exc}", flush=True)
 
-    hf_papers = get_hf_daily()
+    try:
+        hf_papers = track_source("huggingface_daily", get_hf_daily, require_nonempty=True)
+    except Exception as exc:
+        print(f"Hugging Face 来源不可用，继续使用候选池: {exc}", flush=True)
+        hf_papers = []
     hf_by_id = {paper["id"]: paper for paper in hf_papers}
     if hf_by_id:
         verified_hf = _query_arxiv({"id_list": ",".join(hf_by_id)})
@@ -335,7 +357,9 @@ def get_daily_papers():
         flush=True
     )
 
-    return result[:10]
+    # Persisting happens before verification, so do not discard valid discoveries
+    # here. The downstream verification batch still caps expensive work at 24.
+    return result
 
 
 def _panorama_requested(topics):
@@ -351,7 +375,16 @@ def _panorama_requested(topics):
 def get_recent_arxiv_candidates(limit=40, topics=None):
     """Fetch recent verified papers when today's short list is exhausted."""
     try:
-        papers = _query_arxiv(
+        major_papers = _query_arxiv(
+            {
+                "search_query": MAJOR_AI_QUERY,
+                "start": 0,
+                "max_results": min(24, limit),
+                "sortBy": "submittedDate",
+                "sortOrder": "descending",
+            }
+        )
+        general_papers = _query_arxiv(
             {
                 "search_query": "cat:cs.CV OR cat:cs.AI OR cat:cs.LG OR cat:cs.RO OR cat:cs.GR",
                 "start": 0,
@@ -360,6 +393,13 @@ def get_recent_arxiv_candidates(limit=40, topics=None):
                 "sortOrder": "descending",
             }
         )
+        papers = []
+        identities = set()
+        for paper in major_papers + general_papers:
+            identity = paper.get("id") or paper.get("title", "")
+            if identity and identity not in identities:
+                identities.add(identity)
+                papers.append(paper)
         if _panorama_requested(topics):
             panorama_papers = _query_arxiv(
                 {
@@ -399,16 +439,56 @@ def _score_value(paper):
 
 
 def _recommendation_priority(paper: dict) -> float:
-    """Prefer influential verified sources without overriding paper quality."""
+    """Strongly prefer influential verified sources after the relevance gate."""
     tier = int(paper.get("institution_impact_tier") or 1)
-    institution_bonus = {1: 0.0, 2: 0.45, 3: 0.75}.get(tier, 0.0)
-    conference_bonus = 0.2 if paper.get("conference_verified") else 0.0
+    institution_bonus = {1: 0.0, 2: 0.65, 3: 1.1}.get(tier, 0.0)
+    conference_bonus = 0.3 if paper.get("conference_verified") else 0.0
     try:
         stars = max(0, int(paper.get("repo_stars") or 0))
     except (TypeError, ValueError):
         stars = 0
-    repository_bonus = min(0.2, stars / 5000)
+    repository_bonus = min(0.25, stars / 4000)
     return _score_value(paper) + institution_bonus + conference_bonus + repository_bonus
+
+
+FOCUS_TOPIC_MARKERS = (
+    "digital human", "virtual human", "avatar", "human motion", "motion generation",
+    "motion synthesis", "embodied", "vision-language-action", "vla", "robot",
+    "world model", "video generation", "video diffusion", "animation", "panorama",
+    "panoramic", "360-degree", "omnidirectional", "spherical video",
+)
+
+
+def recommendation_track_for_time(push_time=None) -> str:
+    """Use mornings for broad high-impact work and evenings for focus topics."""
+    value = str(push_time or "").strip()
+    try:
+        hour = int(value.split(":", 1)[0])
+    except (ValueError, IndexError):
+        hour = datetime.now().hour
+    return "major_impact" if hour < 12 else "focus_topics"
+
+
+def _focus_topic_match(paper: dict) -> bool:
+    if str(paper.get("track_fit") or "").casefold() in {"focus", "both", "focus_topics"}:
+        return True
+    text = " ".join(
+        [
+            str(paper.get("title") or ""),
+            str(paper.get("abstract") or paper.get("summary") or ""),
+            " ".join(str(value) for value in paper.get("categories", [])),
+        ]
+    ).casefold()
+    return any(marker in text for marker in FOCUS_TOPIC_MARKERS)
+
+
+def _track_priority(paper: dict, recommendation_track: str) -> tuple:
+    base = _recommendation_priority(paper)
+    tier = int(paper.get("institution_impact_tier") or 1)
+    if recommendation_track == "major_impact":
+        fit = str(paper.get("track_fit") or "").casefold() in {"major", "both", "major_impact"}
+        return (int(fit), tier, base)
+    return (int(_focus_topic_match(paper)), base, tier)
 
 
 def select_with_complete_images(
@@ -416,13 +496,20 @@ def select_with_complete_images(
     analyzed: list[dict],
     raw_papers: list[dict],
     limit: int,
+    recommendation_track: str = "balanced",
 ) -> list[dict]:
     """Keep only papers with a complete teaser and a distinct method figure."""
     from paper_media import prepare_paper_images
 
     target_count = max(1, min(len(primary) or 1, limit))
     ordered = list(primary)
-    ordered.extend(sorted(analyzed, key=_recommendation_priority, reverse=True))
+    ordered.extend(
+        sorted(
+            analyzed,
+            key=lambda paper: _track_priority(paper, recommendation_track),
+            reverse=True,
+        )
+    )
     ordered.extend(_verified_fallback(paper) for paper in raw_papers)
     selected = []
     seen = set()
@@ -560,7 +647,7 @@ def analyze_paper(paper):
     return data
 
 
-def analyze_papers_batch(papers, topics=None):
+def analyze_papers_batch(papers, topics=None, recommendation_track="balanced"):
     """Analyze and rank all candidates in one model request."""
     if not papers:
         return []
@@ -581,11 +668,20 @@ def analyze_papers_batch(papers, topics=None):
         }
         for paper in papers
     ]
+    track_instruction = (
+        "本轮是 08:00 大厂/高影响力场：优先大公司、顶级实验室、顶级高校和会影响行业技术路线的工作。"
+        if recommendation_track == "major_impact"
+        else "本轮是 20:00 垂直主题场：优先数字人、Motion Generation、具身智能/VLA、世界模型、视频生成和全景影像。"
+        if recommendation_track == "focus_topics"
+        else "本轮采用影响力与主题相关性平衡排序。"
+    )
     prompt = f"""
 你是实验室顶会论文推荐专家。
 
 实验室关注方向：
 {json.dumps(topics or CONFIG["domains"], ensure_ascii=False)}
+
+{track_instruction}
 
 请一次性分析和评分下面的真实论文候选：
 {json.dumps(candidates, ensure_ascii=False)}
@@ -602,15 +698,20 @@ def analyze_papers_batch(papers, topics=None):
       "score": 0,
       "reason": "推荐理由",
       "opinion": "一句阅读建议，仅说明关注价值，不虚构局限",
-      "web_signal": "联网检索得到的官方发布或开源信号；没有则留空",
-      "keep": true
+	      "web_signal": "联网检索得到的官方发布或开源信号；没有则留空",
+	      "track_fit": "major、focus、both 或 neither",
+	      "keep": true
     }}
   ]
 }}
 
-score 使用 0 到 10，综合相关性、创新性、技术深度、实验可信度和实验室项目价值。
-在论文质量相近时，优先大公司研究院、顶级高校/研究机构、顶会正式录用、代码仓库活跃度高的论文；
-机构名气只能作为同等质量下的加分信号，不能掩盖方法薄弱、实验不充分或与主题无关。
+score 使用 0 到 10，候选满足以下任一路径即可保留：
+1. 大公司研究院/头部实验室发布、对通用 AI 有明显行业影响力的工作；
+2. 与数字人、Motion Generation、具身智能、世界模型或视频方向高度相关的工作。
+第一类不因超出五个重点方向而被过滤；第二类仍需较强主题相关性。两类都要考虑创新性、技术深度、实验可信度和项目价值。
+优先 OpenAI、Google/DeepMind、Meta、Microsoft、NVIDIA、Adobe、Apple、Amazon、字节、腾讯、阿里、百度等
+大厂研究团队，以及顶级高校/研究机构、顶会正式录用、官方仓库活跃度高的论文。机构名气不能掩盖方法薄弱、
+实验不充分或与主题无关，但在质量接近时应明确优先有影响力来源。
 可以联网检索官方项目主页、官方代码、模型权重和机构发布，用作评分信号。
 只允许根据输入标题、摘要、Hugging Face 热度和联网检索结果生成中文解读与评分。不得生成或修改作者、日期、
 论文链接、PDF 链接、会议、期刊、项目主页或代码地址；不得编造实验结果。
@@ -665,13 +766,21 @@ score 使用 0 到 10，综合相关性、创新性、技术深度、实验可�
 
 
 
-def daily_push(chat_id=None, topics=None, max_papers=1):
+def daily_push(
+    chat_id=None,
+    topics=None,
+    max_papers=1,
+    recommendation_track="balanced",
+):
 
     init_db()
 
 
     print("抓取论文...",flush=True)
 
+
+    from paper_candidate_pool import eligible_candidates, mark_candidates, store_candidates
+    from source_health import track_source
 
     papers = [
         paper
@@ -684,7 +793,11 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
 
         alphaxiv_papers = [
             paper
-            for paper in get_alphaxiv_candidates(topics or CONFIG["domains"])
+            for paper in track_source(
+                "alphaxiv",
+                lambda: get_alphaxiv_candidates(topics or CONFIG["domains"]),
+                require_nonempty=True,
+            )
             if published_within_lookback(paper)
         ]
         papers = alphaxiv_papers + [
@@ -713,10 +826,13 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
     try:
         from conference_papers import get_conference_candidates
 
-        conference_papers = get_conference_candidates(
-            topics,
-            exclude_titles=delivered_titles,
-            limit=4,
+        conference_papers = track_source(
+            "conference_official",
+            lambda: get_conference_candidates(
+                topics,
+                exclude_titles=delivered_titles,
+                limit=4,
+            ),
         )
     except Exception as exc:
         print(f"会议官方候选获取失败，继续使用 arXiv/HF: {exc}", flush=True)
@@ -732,7 +848,11 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
     # 仍按 chat 去重，最终只会留下通过三层开源核验的论文。
     if len(papers) < 24:
         identities = {p.get("id") or p.get("title", "") for p in papers}
-        for candidate in get_recent_arxiv_candidates(topics=topics):
+        for candidate in track_source(
+            "arxiv_recent",
+            lambda: get_recent_arxiv_candidates(topics=topics),
+            require_nonempty=True,
+        ):
             identity = candidate.get("id") or candidate.get("title", "")
             if not identity or identity in identities:
                 continue
@@ -744,6 +864,20 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
                 break
 
 
+    store_candidates(papers)
+    pooled = eligible_candidates(limit=60)
+    identities = {p.get("id") or p.get("paper_url") or p.get("title", "") for p in papers}
+    for candidate in pooled:
+        identity = candidate.get("id") or candidate.get("paper_url") or candidate.get("title", "")
+        if identity and identity not in identities:
+            identities.add(identity)
+            papers.append(candidate)
+
+    papers = [
+        paper for paper in papers
+        if not paper_delivered(target_chat_id, paper.get("title", ""))
+    ]
+
     print(
         "去重后:",
         len(papers),
@@ -754,7 +888,22 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
     # 再用 GitHub/GitLab API 和 README 做确定性复核；任何一层不通过都不推荐。
     from paper_opensource import filter_open_source_large_team
 
-    papers = filter_open_source_large_team(papers[:24])
+    verification_batch = papers[:24]
+    papers = filter_open_source_large_team(verification_batch)
+    verified_identities = {
+        paper.get("id") or paper.get("paper_url") or paper.get("title", "")
+        for paper in papers
+    }
+    mark_candidates(papers, "verified")
+    mark_candidates(
+        [
+            paper for paper in verification_batch
+            if (paper.get("id") or paper.get("paper_url") or paper.get("title", ""))
+            not in verified_identities
+        ],
+        "deferred",
+        "open-source or team verification did not pass in this run",
+    )
     print("三层核验后的开源大团队候选:", len(papers), flush=True)
     if not papers:
         raise RuntimeError(
@@ -786,14 +935,21 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
         flush=True,
     )
 
-    analyzed = analyze_papers_batch(papers[:10], topics=topics)
+    analyzed = analyze_papers_batch(
+        papers[:10],
+        topics=topics,
+        recommendation_track=recommendation_track,
+    )
     selected = [
         paper
         for paper in analyzed
         if paper.get("keep")
         and _score_value(paper) >= CONFIG["min_score"]
     ]
-    selected.sort(key=_recommendation_priority, reverse=True)
+    selected.sort(
+        key=lambda paper: _track_priority(paper, recommendation_track),
+        reverse=True,
+    )
 
     print(
         "论文评分: "
@@ -814,7 +970,12 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
     selected = selected[:max_papers]
 
     if not selected and analyzed:
-        selected = [max(analyzed, key=_recommendation_priority)]
+        selected = [
+            max(
+                analyzed,
+                key=lambda paper: _track_priority(paper, recommendation_track),
+            )
+        ]
         selected[0]["card_title"] = "📚 每日论文 · 本时段最佳"
         selected[0]["reason"] = (
             str(selected[0].get("reason") or "").strip()
@@ -833,6 +994,7 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
         analyzed,
         papers,
         max_papers,
+        recommendation_track=recommendation_track,
     )
     if not selected:
         raise RuntimeError(
@@ -877,6 +1039,9 @@ def daily_push(chat_id=None, topics=None, max_papers=1):
 
         save_paper(paper)
         save_delivery(target_chat_id, paper.get("title", ""))
+        # Delivery is chat-specific in paper_deliveries. Keep the shared candidate
+        # verified so another subscribed chat can still receive it.
+        mark_candidates([paper], "verified")
 
         library.append(
             paper

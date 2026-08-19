@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 
 
 CACHE_DIR = Path("data/paper_analysis")
@@ -31,7 +31,7 @@ def _parse_json_object(value: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
         text = text[start : end + 1]
-    payload = json.loads(text)
+    payload = json.loads(text, strict=False)
     return payload if isinstance(payload, dict) else {}
 
 

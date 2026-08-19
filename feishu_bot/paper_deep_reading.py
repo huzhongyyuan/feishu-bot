@@ -6,7 +6,7 @@ from pathlib import Path
 
 import fitz
 
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 from paper_media import (
     _download_pdf,
     _safe_cache_id,
@@ -36,11 +36,11 @@ def _parse_json_object(value: str) -> dict:
         if text.endswith("```"):
             text = text[:-3].strip()
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start:end + 1], strict=False)
         raise
 
 

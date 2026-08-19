@@ -11,7 +11,7 @@ from pathlib import Path
 import fitz
 import requests
 
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 from paper_media import _download_pdf, _validated_pdf_url
 
 
@@ -22,6 +22,7 @@ CODE_URL_PATTERN = re.compile(
     r"https://(?:www\.)?(?:github\.com|gitlab\.com)/[^\s<>'\")\]}]+",
     re.IGNORECASE,
 )
+WEB_URL_PATTERN = re.compile(r"https://[^\s<>'\")\]}]+", re.IGNORECASE)
 MAJOR_ORGANIZATIONS = (
     "openai",
     "anthropic",
@@ -42,6 +43,14 @@ MAJOR_ORGANIZATIONS = (
     "waymo",
     "tesla",
     "moonshot",
+    "deepseek",
+    "salesforce",
+    "mistral ai",
+    "cohere",
+    "huawei",
+    "kuaishou",
+    "zhipu",
+    "minimax",
     "shanghai ai laboratory",
     "beijing academy of artificial intelligence",
 )
@@ -74,6 +83,8 @@ TOP_ACADEMIC_ORGANIZATIONS = (
     "vector institute",
     "allen institute for ai",
     "max planck institute",
+    "inria",
+    "cea",
 )
 
 
@@ -186,6 +197,106 @@ def _urls_from_pdf(paper: dict) -> list[str]:
         return urls
     finally:
         document.close()
+
+
+def _discover_llm_code_signals(paper: dict) -> list[str]:
+    """Collect repository candidates from supplied first-party pages.
+
+    This is evidence discovery only. The LLM still confirms ownership first,
+    and the repository API/README verifier remains the final hard gate.
+    """
+    cached = paper.get("_llm_code_signals")
+    if isinstance(cached, list):
+        return [
+            url
+            for url in (_normalize_repo_url(value) for value in cached)
+            if url
+        ][:6]
+
+    result: list[str] = []
+    for field in (
+        "code_url",
+        "hf_github_url",
+        "github_url",
+        "project_url",
+        "hf_project_url",
+        "comment",
+        "abstract",
+        "summary",
+    ):
+        for url in _extract_repo_urls(paper.get(field)):
+            if url not in result:
+                result.append(url)
+
+    pages: list[str] = []
+    for field in ("project_url", "hf_project_url", "abstract", "summary"):
+        raw = str(paper.get(field) or "")
+        values = [raw] if raw.startswith("https://") else WEB_URL_PATTERN.findall(raw)
+        for value in values:
+            value = value.rstrip(".,;:)")
+            if _safe_project_url(value) and value not in pages:
+                pages.append(value)
+
+    for page_url in pages[:3]:
+        if len(result) >= 6:
+            break
+        try:
+            for url in _urls_from_page(page_url):
+                if url not in result:
+                    result.append(url)
+        except Exception:
+            continue
+    return result[:6]
+
+
+def _llm_signal_evidence(url: str) -> dict:
+    """Fetch compact repository evidence without deciding paper ownership."""
+    normalized = _normalize_repo_url(url)
+    result = {"code_url": normalized}
+    if not normalized:
+        return result
+    parsed = urllib.parse.urlparse(normalized)
+    if (parsed.hostname or "").casefold() != "github.com":
+        return result
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) != 2:
+        return result
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "HumanGroupBot/1.0 evidence collector",
+    }
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        metadata_response = requests.get(
+            f"https://api.github.com/repos/{parts[0]}/{parts[1]}",
+            timeout=20,
+            headers=headers,
+        )
+        if metadata_response.status_code == 200:
+            metadata = metadata_response.json()
+            result.update(
+                {
+                    "description": str(metadata.get("description") or "")[:500],
+                    "homepage": str(metadata.get("homepage") or "")[:500],
+                }
+            )
+        readme_response = requests.get(
+            f"https://api.github.com/repos/{parts[0]}/{parts[1]}/readme",
+            timeout=20,
+            headers=headers,
+        )
+        if readme_response.status_code == 200:
+            payload = readme_response.json()
+            if str(payload.get("encoding") or "").casefold() == "base64":
+                readme = base64.b64decode(payload.get("content") or "").decode(
+                    "utf-8", errors="replace"
+                )
+                result["readme_excerpt"] = re.sub(r"\s+", " ", readme)[:1800]
+    except (requests.RequestException, ValueError, TypeError):
+        pass
+    return result
 
 
 def _repo_matches_paper(metadata: dict, readme: str, paper: dict) -> bool:
@@ -453,7 +564,7 @@ def _parse_json_object(value: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
         text = text[start : end + 1]
-    payload = json.loads(text)
+    payload = json.loads(text, strict=False)
     return payload if isinstance(payload, dict) else {}
 
 
@@ -461,21 +572,18 @@ def llm_confirm_open_source_links(papers: list[dict]) -> dict[str, dict]:
     """Use web-enabled LLM research to confirm paper-to-repository ownership first."""
     if not papers:
         return {}
-    candidates = [
-        {
+    candidates = []
+    for paper in papers:
+        signals = _discover_llm_code_signals(paper)
+        candidates.append({
             "title": paper.get("title", ""),
             "arxiv_id": paper.get("id") or paper.get("arxiv_id") or "",
             "authors": list(paper.get("authors", []))[:12],
             "paper_url": paper.get("paper_url", ""),
-            "known_code_signal": (
-                paper.get("hf_github_url")
-                or paper.get("code_url")
-                or paper.get("hf_project_url")
-                or ""
-            ),
-        }
-        for paper in papers
-    ]
+            "known_code_signals": [
+                _llm_signal_evidence(url) for url in signals[:3]
+            ],
+        })
     prompt = f"""
 你是论文开源核验员。请联网逐篇确认下面论文是否已经公开了属于该论文的源代码仓库。
 只接受公开 GitHub 或 GitLab 仓库；项目主页、论文 PDF、模型演示、空仓库、非官方复现都不算。
@@ -493,7 +601,7 @@ def llm_confirm_open_source_links(papers: list[dict]) -> dict[str, dict]:
 宁可返回 false，也不要猜测、补全或根据同名仓库推断。
 """
     allowed = {str(paper.get("title") or "") for paper in papers}
-    has_known_signal = any(item.get("known_code_signal") for item in candidates)
+    has_known_signal = any(item.get("known_code_signals") for item in candidates)
     for attempt in range(2):
         try:
             payload = _parse_json_object(
@@ -528,9 +636,12 @@ def llm_confirm_open_source_links(papers: list[dict]) -> dict[str, dict]:
 
 
 def filter_open_source_large_team(papers: list[dict]) -> list[dict]:
-    candidates = list(papers)
+    candidates = [dict(paper) for paper in papers]
+    for paper in candidates:
+        paper["_llm_code_signals"] = _discover_llm_code_signals(paper)
     candidates.sort(
         key=lambda paper: (
+            bool(paper.get("_llm_code_signals")),
             institution_impact(paper)["institution_impact_tier"],
             bool(paper.get("conference_verified")),
             int(paper.get("hf_upvotes") or 0),
@@ -538,20 +649,30 @@ def filter_open_source_large_team(papers: list[dict]) -> list[dict]:
         ),
         reverse=True,
     )
-    confirmations = llm_confirm_open_source_links(candidates)
     result = []
-    for paper in candidates:
-        confirmation = confirmations.get(str(paper.get("title") or ""))
-        if not confirmation:
-            print(f"跳过 LLM 未确认开源论文: {paper.get('title', '')}", flush=True)
-            continue
-        candidate = {**paper, **confirmation}
-        enriched = enrich_open_source_paper(candidate)
-        if enriched:
-            result.append(enriched)
-        else:
-            print(
-                f"跳过非核验开源/非大团队论文: {paper.get('title', '')}",
-                flush=True,
-            )
+    # Browser-backed LLMs are substantially more reliable on a focused batch
+    # than on a 20-30 paper mega-prompt. Preserve priority order, verify eight
+    # at a time, and stop after enough candidates for daily/weekly selection.
+    for start in range(0, len(candidates), 8):
+        batch = candidates[start : start + 8]
+        confirmations = llm_confirm_open_source_links(batch)
+        for paper in batch:
+            confirmation = confirmations.get(str(paper.get("title") or ""))
+            if not confirmation:
+                print(
+                    f"跳过 LLM 未确认开源论文: {paper.get('title', '')}",
+                    flush=True,
+                )
+                continue
+            candidate = {**paper, **confirmation}
+            enriched = enrich_open_source_paper(candidate)
+            if enriched:
+                result.append(enriched)
+            else:
+                print(
+                    f"跳过非核验开源/非大团队论文: {paper.get('title', '')}",
+                    flush=True,
+                )
+        if len(result) >= 4:
+            break
     return result

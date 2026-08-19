@@ -38,6 +38,17 @@ def test_panorama_topics_expand_to_english_conference_keywords():
     assert "360-degree video" in keywords
 
 
+def test_core_topics_expand_to_targeted_conference_keywords():
+    keywords = conference_papers._keywords(
+        ["数字人", "Motion Generation", "具身智能", "世界模型", "视频生成"]
+    )
+    assert "digital human" in keywords
+    assert "motion generation" in keywords
+    assert "vision-language-action" in keywords
+    assert "world model" in keywords
+    assert "video generation" in keywords
+
+
 def test_parse_icml_excludes_position_papers():
     html = (
         '<a href="/virtual/2026/poster/1">Video Generation</a>'

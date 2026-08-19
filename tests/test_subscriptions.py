@@ -1,7 +1,7 @@
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -43,6 +43,9 @@ class SubscriptionTests(unittest.TestCase):
 
     def test_default_subscription_includes_panorama_topics(self):
         subscription = subscriptions.get_subscription("oc_panorama")
+        self.assertIn("数字人", subscription["topics"])
+        self.assertIn("Motion Generation", subscription["topics"])
+        self.assertIn("具身智能", subscription["topics"])
         self.assertIn("全景相机", subscription["topics"])
         self.assertIn("全景视频", subscription["topics"])
 
@@ -79,6 +82,30 @@ class SubscriptionTests(unittest.TestCase):
             "推送时间 25:99",
         )
         self.assertIn("格式不正确", reply)
+
+    def test_failed_daily_attempt_has_retry_backoff(self):
+        subscriptions.update_subscription(
+            "oc_retry",
+            push_times=["08:00"],
+            weekdays_only=False,
+            enabled=True,
+        )
+        now = datetime(2026, 8, 3, 8, 5, tzinfo=subscriptions.SHANGHAI)
+        subscriptions.mark_daily_attempt("oc_retry", "08:00", "2026-08-03")
+        with subscriptions._connect() as conn:
+            conn.execute(
+                """
+                UPDATE daily_subscription_attempts SET attempted_at=?
+                WHERE chat_id=? AND run_date=? AND push_time=?
+                """,
+                (now.isoformat(), "oc_retry", "2026-08-03", "08:00"),
+            )
+        due = subscriptions.due_subscriptions(now)
+        self.assertNotIn("oc_retry", {item["chat_id"] for item in due})
+
+        later = now + timedelta(minutes=subscriptions.DAILY_RETRY_MINUTES + 1)
+        due = subscriptions.due_subscriptions(later)
+        self.assertIn("oc_retry", {item["chat_id"] for item in due})
 
     def test_weekly_roundup_runs_once_with_retry_backoff(self):
         subscriptions.update_subscription("oc_test", enabled=True)

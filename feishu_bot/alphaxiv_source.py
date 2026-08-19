@@ -17,6 +17,11 @@ CACHE_PATH = Path("data/alphaxiv_daily.json")
 ARXIV_ID_PATTERN = re.compile(r"(?<!\d)(\d{4}\.\d{4,5})(?:v\d+)?(?!\d)")
 TIMEZONE = ZoneInfo("Asia/Shanghai")
 DEFAULT_KEYWORDS = [
+    "agent harness",
+    "AI infrastructure",
+    "digital human",
+    "motion generation",
+    "embodied AI",
     "world model",
     "video generation",
     "human motion",
@@ -99,9 +104,11 @@ class AlphaXivMCPClient:
                     "keywords": DEFAULT_KEYWORDS,
                     "question": (
                         "Find the strongest recent research papers relevant to "
-                        f"{topic_text or 'world models, video generation, human motion, and panoramic vision'}. "
-                        "Prioritize technically substantial work from major research labs or universities, "
-                        "especially papers with official public code. Return arXiv papers only."
+                        f"{topic_text or 'digital humans, motion generation, embodied AI, world models, video generation, and panoramic vision'}. "
+                        "Use two discovery tracks: influential general-AI work from major AI companies or top labs "
+                        "regardless of exact topic, plus strong work in the named focus areas. Prioritize technically "
+                        "substantial papers with official public code. "
+                        "Return arXiv papers only."
                     ),
                     "difficulty": 5,
                     "published_after": published_after,

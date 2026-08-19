@@ -35,6 +35,19 @@ SOURCES = [
 ]
 
 TOPIC_KEYWORDS = {
+    "数字人": [
+        "digital human", "virtual human", "human avatar", "neural avatar",
+        "talking head", "audio-driven avatar", "facial animation",
+    ],
+    "Motion Generation": [
+        "motion generation", "text-to-motion", "human motion generation",
+        "motion synthesis", "motion editing", "gesture generation",
+    ],
+    "具身智能": [
+        "embodied ai", "embodied intelligence", "vision-language-action",
+        "vision language action", "vla", "robot learning", "robot manipulation",
+        "humanoid robot", "robot policy",
+    ],
     "世界模型": [
         "world model", "world modeling", "world modelling", "video prediction",
         "future prediction", "latent dynamics", "dynamics model",

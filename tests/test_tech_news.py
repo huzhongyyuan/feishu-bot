@@ -35,6 +35,90 @@ def test_default_accounts_are_deduplicated():
     assert {"OpenAI", "AnthropicAI", "nvidia", "Alibaba_Qwen"}.issubset(
         set(tech_news.DEFAULT_X_ACCOUNTS)
     )
+    assert "thsottiaux" in tech_news.DEFAULT_X_ACCOUNTS
+
+
+def test_expanded_official_sources_cover_models_chips_and_robotics():
+    assert {
+        "DeepSeek",
+        "Hugging Face",
+        "Mistral AI",
+        "AMD AI",
+        "Groq",
+        "Figure AI",
+        "Physical Intelligence",
+        "Unitree",
+    }.issubset(set(tech_news.DEFAULT_COMPANIES))
+    assert "deepseek.com" in tech_news.COMPANY_DOMAINS["DeepSeek"]
+    assert "github.com" in tech_news.COMPANY_DOMAINS["DeepSeek"]
+    assert "physicalintelligence.company" in tech_news.COMPANY_DOMAINS[
+        "Physical Intelligence"
+    ]
+    assert "https://machinelearning.apple.com/rss.xml" in tech_news.OFFICIAL_NEWS_FEEDS[
+        "Apple ML"
+    ]
+    assert "https://www.amazon.science/index.rss" in tech_news.OFFICIAL_NEWS_FEEDS[
+        "Amazon/AWS AI"
+    ]
+
+
+def test_direct_official_feed_discovery(monkeypatch):
+    class Response:
+        content = b"""
+        <rss><channel><item>
+          <title>Official open model release</title>
+          <link>https://huggingface.co/blog/official-open-model</link>
+          <pubDate>Sat, 15 Aug 2026 08:00:00 GMT</pubDate>
+          <description><![CDATA[The official release adds new model weights and tools.]]></description>
+        </item></channel></rss>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        tech_news,
+        "OFFICIAL_NEWS_FEEDS",
+        {"Hugging Face": ["https://huggingface.co/blog/feed.xml"]},
+    )
+    monkeypatch.setattr(tech_news.requests, "get", lambda *args, **kwargs: Response())
+    subscription = {
+        "companies": ["Hugging Face"],
+        "public_accounts": [],
+        "x_accounts": [],
+    }
+
+    items = tech_news._discover_official_feed_items(subscription)
+
+    assert len(items) == 1
+    assert items[0]["published_date"] == "2026-08-15"
+    assert items[0]["url"] == "https://huggingface.co/blog/official-open-model"
+    assert tech_news._item_source_type(items[0], subscription) == "企业官方"
+
+
+def test_direct_x_discovery_extracts_status_urls_through_proxy(monkeypatch):
+    class Response:
+        status_code = 200
+        text = (
+            '<a href="/thsottiaux/status/2088103609477238858">post</a>'
+            '<a href="/thsottiaux/status/2088019704803897705">post</a>'
+        )
+
+    calls = []
+    monkeypatch.setenv("X_PROXY_URL", "http://10.103.11.92:4780")
+    monkeypatch.setattr(
+        tech_news.requests,
+        "get",
+        lambda *args, **kwargs: calls.append(kwargs) or Response(),
+    )
+    subscription = _subscription()
+    subscription["x_accounts"].append("thsottiaux")
+    items = tech_news._discover_direct_x_items(subscription)
+    assert [item["url"] for item in items] == [
+        "https://x.com/thsottiaux/status/2088103609477238858",
+        "https://x.com/thsottiaux/status/2088019704803897705",
+    ]
+    assert calls[0]["proxies"]["https"] == "http://10.103.11.92:4780"
 
 
 def test_only_selected_wechat_or_official_company_domains_are_allowed():
@@ -199,6 +283,54 @@ def test_collect_news_rejects_unofficial_and_old_results(monkeypatch):
     assert items[0]["verified"] is True
 
 
+def test_collect_news_can_expand_lookback_for_recent_fallback(monkeypatch):
+    now = datetime(2026, 8, 11, 21, 0, tzinfo=SHANGHAI)
+    monkeypatch.setattr(
+        tech_news,
+        "call_glm",
+        lambda *args, **kwargs: json.dumps(
+            {
+                "items": [
+                    {
+                        "title": "Recent verified release",
+                        "publisher": "OpenAI",
+                        "published_date": "2026-07-20",
+                        "url": "https://openai.com/index/recent-verified-release/",
+                        "summary": "OpenAI 官方近期发布新的 AI 能力。",
+                        "why_it_matters": "值得关注。",
+                        "entities": ["OpenAI"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+    items = tech_news.collect_tech_news(
+        _subscription(), now=now, verify_pages=False, lookback_days=30
+    )
+    assert [item["title"] for item in items] == ["Recent verified release"]
+
+
+def test_delivery_dedupes_same_event_even_when_url_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(tech_news, "DB_PATH", tmp_path / "news.db")
+    now = datetime(2026, 8, 11, 21, 0, tzinfo=SHANGHAI)
+    original = {
+        "title": "OpenAI releases GPT Next for developers",
+        "summary": "OpenAI 发布 GPT Next，并向开发者开放新的 API 能力。",
+        "publisher": "OpenAI",
+        "entities": ["OpenAI", "GPT Next"],
+        "url": "https://openai.com/index/gpt-next/",
+    }
+    tech_news._mark_news_run("oc_test", [original], now)
+    delivered = tech_news._delivered_items("oc_test")
+    repost = {
+        **original,
+        "title": "Introducing GPT Next for developers",
+        "url": "https://x.com/OpenAI/status/123456",
+    }
+    assert tech_news._is_previously_delivered(repost, delivered) is True
+
+
 def test_news_subscription_commands_and_schedule(tmp_path, monkeypatch):
     monkeypatch.setattr(tech_news, "DB_PATH", tmp_path / "news.db")
     response = tech_news.handle_news_subscription_command(
@@ -263,6 +395,7 @@ def test_digest_contains_direct_links(monkeypatch):
                 "url": "https://openai.com/index/official-ai-launch/",
                 "summary": "官方事实摘要。",
                 "why_it_matters": "值得关注。",
+                "category": "模型与研究",
                 "entities": ["OpenAI"],
                 "source_type": "企业官方",
             }
@@ -273,6 +406,22 @@ def test_digest_contains_direct_links(monkeypatch):
     content = captured["json"]["content"]
     assert "https://openai.com/index/official-ai-launch/" in content
     assert "https://my.feishu.cn/docx/news-library" in content
+    card = json.loads(content)
+    assert card["header"]["title"]["content"] == "🌙 AI 科技情报 · 晚报"
+    assert card["header"]["template"] == "indigo"
+    assert "今晚速览" in content
+    assert "模型与研究" in content
+    assert "01｜" in content
+
+
+def test_news_category_prefers_embodied_robotics_over_generic_model_words():
+    assert tech_news._news_category(
+        {
+            "title": "New embodied robot model",
+            "summary": "A humanoid robot learns a new control policy.",
+            "entities": [],
+        }
+    ) == "机器人与具身"
 
 
 def test_cross_source_duplicate_prefers_official_company_page():

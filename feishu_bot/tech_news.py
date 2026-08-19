@@ -8,13 +8,16 @@ import re
 import sqlite3
 import urllib.parse
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta
 from pathlib import Path
+from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
 import requests
 
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "tech_news.db"
@@ -31,26 +34,59 @@ DEFAULT_PUBLIC_ACCOUNTS = [
 ]
 DEFAULT_COMPANIES = [
     "Moonshot/Kimi",
+    "DeepSeek",
+    "智谱 GLM",
+    "MiniMax",
     "NVIDIA",
+    "AMD AI",
+    "Groq",
+    "Cerebras",
     "OpenAI",
     "Anthropic/Claude",
     "阿里/Qwen",
     "字节/豆包",
     "腾讯/混元",
+    "Google AI/Gemini",
     "Google DeepMind",
     "Meta AI",
     "Microsoft AI",
+    "Amazon/AWS AI",
+    "Apple ML",
+    "Hugging Face",
+    "Mistral AI",
+    "Cohere",
+    "Perplexity",
+    "Stability AI",
+    "Runway",
+    "Figure AI",
+    "Physical Intelligence",
+    "Unitree",
     "xAI",
 ]
 OFFICIAL_X_ACCOUNTS = {
     "OpenAI": ["OpenAI", "OpenAIDevs"],
     "Anthropic/Claude": ["AnthropicAI"],
     "NVIDIA": ["nvidia"],
+    "AMD AI": ["AMD"],
+    "Groq": ["GroqInc"],
+    "Cerebras": ["CerebrasSystems"],
+    "DeepSeek": ["deepseek_ai"],
     "阿里/Qwen": ["Alibaba_Qwen"],
     "腾讯/混元": ["TencentGlobal"],
+    "Google AI/Gemini": ["GoogleAI"],
     "Google DeepMind": ["GoogleDeepMind"],
     "Meta AI": ["AIatMeta"],
     "Microsoft AI": ["MSFTResearch", "Microsoft"],
+    "Amazon/AWS AI": ["AWSCloud"],
+    "Hugging Face": ["huggingface"],
+    "Mistral AI": ["mistralai"],
+    "Cohere": ["cohere"],
+    "Perplexity": ["perplexity_ai"],
+    "Stability AI": ["StabilityAI"],
+    "Runway": ["runwayml"],
+    "Figure AI": ["Figure_robot"],
+    "Physical Intelligence": ["physical_int"],
+    "Unitree": ["UnitreeRobotics"],
     "xAI": ["spacexai", "grok"],
 }
 DEFAULT_X_ACCOUNTS = list(
@@ -60,6 +96,12 @@ DEFAULT_X_ACCOUNTS = list(
         for handle in handles
     )
 )
+if "thsottiaux" not in DEFAULT_X_ACCOUNTS:
+    DEFAULT_X_ACCOUNTS.append("thsottiaux")
+
+# These high-signal accounts are scanned directly through the configured
+# proxy. This avoids relying on an LLM/web-search provider to discover post URLs.
+DIRECT_X_DISCOVERY_HANDLES = {"openai", "openaidevs", "thsottiaux"}
 X_HANDLE_TO_COMPANY = {
     handle.casefold(): company
     for company, handles in OFFICIAL_X_ACCOUNTS.items()
@@ -67,17 +109,112 @@ X_HANDLE_TO_COMPANY = {
 }
 COMPANY_DOMAINS = {
     "Moonshot/Kimi": {"moonshot.cn", "kimi.com"},
+    "DeepSeek": {"deepseek.com", "github.com"},
+    "智谱 GLM": {"zhipuai.cn", "bigmodel.cn"},
+    "MiniMax": {"minimaxi.com", "minimax.io"},
     "NVIDIA": {"nvidia.com"},
+    "AMD AI": {"amd.com"},
+    "Groq": {"groq.com"},
+    "Cerebras": {"cerebras.ai"},
     "OpenAI": {"openai.com"},
     "Anthropic/Claude": {"anthropic.com", "claude.com"},
-    "阿里/Qwen": {"alibaba.com", "aliyun.com", "alibabacloud.com", "qwen.ai"},
+    "阿里/Qwen": {
+        "alibaba.com", "aliyun.com", "alibabacloud.com", "qwen.ai", "github.com",
+    },
     "字节/豆包": {"bytedance.com", "volcengine.com", "doubao.com"},
     "腾讯/混元": {"tencent.com", "cloud.tencent.com"},
+    "Google AI/Gemini": {"blog.google", "ai.google.dev", "developers.googleblog.com"},
     "Google DeepMind": {"deepmind.google", "blog.google", "googleblog.com"},
     "Meta AI": {"ai.meta.com", "about.fb.com", "meta.com"},
     "Microsoft AI": {"microsoft.com"},
+    "Amazon/AWS AI": {"aws.amazon.com", "amazon.science"},
+    "Apple ML": {"machinelearning.apple.com", "apple.com"},
+    "Hugging Face": {"huggingface.co"},
+    "Mistral AI": {"mistral.ai"},
+    "Cohere": {"cohere.com"},
+    "Perplexity": {"perplexity.ai"},
+    "Stability AI": {"stability.ai"},
+    "Runway": {"runwayml.com"},
+    "Figure AI": {"figure.ai"},
+    "Physical Intelligence": {"physicalintelligence.company"},
+    "Unitree": {"unitree.com"},
     "xAI": {"x.ai"},
 }
+
+# Direct official feeds supplement model-assisted web search. Feed entries are
+# still checked against the publisher's allow-listed domain and publication
+# date before they can be sent.
+OFFICIAL_NEWS_FEEDS = {
+    "OpenAI": ["https://openai.com/news/rss.xml"],
+    "Google AI/Gemini": ["https://blog.google/technology/ai/rss/"],
+    "Google DeepMind": ["https://deepmind.google/blog/rss.xml"],
+    "NVIDIA": ["https://blogs.nvidia.com/feed/"],
+    "Microsoft AI": ["https://www.microsoft.com/en-us/research/feed/"],
+    "Hugging Face": ["https://huggingface.co/blog/feed.xml"],
+    "Amazon/AWS AI": [
+        "https://aws.amazon.com/blogs/machine-learning/feed/",
+        "https://www.amazon.science/index.rss",
+    ],
+    "Apple ML": ["https://machinelearning.apple.com/rss.xml"],
+    "DeepSeek": ["https://github.com/deepseek-ai/deepseek-harness/releases.atom"],
+    "阿里/Qwen": ["https://github.com/QwenLM/Qwen3/releases.atom"],
+}
+
+NEWS_CATEGORY_ORDER = (
+    "模型与研究",
+    "产品与 Agent",
+    "算力与芯片",
+    "机器人与具身",
+    "资本与组织",
+    "治理与安全",
+    "企业动态",
+)
+NEWS_CATEGORY_ICONS = {
+    "模型与研究": "🧠",
+    "产品与 Agent": "🛠️",
+    "算力与芯片": "⚡",
+    "机器人与具身": "🤖",
+    "资本与组织": "💼",
+    "治理与安全": "🛡️",
+    "企业动态": "🏢",
+}
+NEWS_CATEGORY_KEYWORDS = {
+    "机器人与具身": (
+        "robot", "robotics", "humanoid", "embodied", "具身", "机器人", "人形",
+    ),
+    "算力与芯片": (
+        "gpu", "cuda", "chip", "semiconductor", "inference", "算力", "芯片", "推理服务",
+    ),
+    "资本与组织": (
+        "funding", "financing", "acquisition", "revenue", "earnings", "融资", "并购", "财报", "估值",
+    ),
+    "治理与安全": (
+        "regulation", "policy", "safety", "security", "governance", "监管", "政策", "安全", "治理", "标准",
+    ),
+    "产品与 Agent": (
+        "agent", "assistant", "copilot", "codex", "api", "product", "智能体", "助手", "产品",
+    ),
+    "模型与研究": (
+        "model", "research", "paper", "benchmark", "gpt", "claude", "qwen", "gemini", "模型", "论文", "研究", "基准", "开源",
+    ),
+}
+
+
+def _news_category(item: dict) -> str:
+    requested = str(item.get("category") or "").strip()
+    if requested in NEWS_CATEGORY_ORDER:
+        return requested
+    text = " ".join(
+        [
+            str(item.get("title") or ""),
+            str(item.get("summary") or ""),
+            " ".join(str(value) for value in item.get("entities", [])),
+        ]
+    ).casefold()
+    for category, keywords in NEWS_CATEGORY_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            return category
+    return "企业动态"
 
 
 def _connect() -> sqlite3.Connection:
@@ -132,10 +269,28 @@ def init_tech_news() -> None:
                 chat_id TEXT NOT NULL,
                 url TEXT NOT NULL,
                 delivered_at TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                publisher TEXT NOT NULL DEFAULT '',
+                entities_json TEXT NOT NULL DEFAULT '[]',
                 PRIMARY KEY (chat_id, url)
             )
             """
         )
+        delivery_columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(news_deliveries)").fetchall()
+        }
+        for column, declaration in {
+            "title": "TEXT NOT NULL DEFAULT ''",
+            "summary": "TEXT NOT NULL DEFAULT ''",
+            "publisher": "TEXT NOT NULL DEFAULT ''",
+            "entities_json": "TEXT NOT NULL DEFAULT '[]'",
+        }.items():
+            if column not in delivery_columns:
+                conn.execute(
+                    f"ALTER TABLE news_deliveries ADD COLUMN {column} {declaration}"
+                )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS news_archive_documents (
@@ -337,7 +492,7 @@ def _parse_json_object(value: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
         text = text[start : end + 1]
-    result = json.loads(text)
+    result = json.loads(text, strict=False)
     return result if isinstance(result, dict) else {}
 
 
@@ -402,6 +557,106 @@ def _strip_html_fragment(value: str) -> str:
     text = re.sub(r"<br\s*/?>", "\n", value, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
     return re.sub(r"[ \t]+", " ", html.unescape(text)).strip()
+
+
+def _feed_child_text(entry: ElementTree.Element, names: set[str]) -> str:
+    for child in entry.iter():
+        local_name = str(child.tag).rsplit("}", 1)[-1].casefold()
+        if local_name in names and child.text:
+            return str(child.text).strip()
+    return ""
+
+
+def _feed_entry_url(entry: ElementTree.Element, feed_url: str) -> str:
+    for child in entry.iter():
+        if str(child.tag).rsplit("}", 1)[-1].casefold() != "link":
+            continue
+        candidate = str(child.attrib.get("href") or child.text or "").strip()
+        relation = str(child.attrib.get("rel") or "alternate").casefold()
+        if candidate and relation in {"", "alternate"}:
+            return urllib.parse.urljoin(feed_url, candidate)
+    return ""
+
+
+def _feed_date(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return parsedate_to_datetime(raw).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def _read_official_feed(publisher: str, feed_url: str) -> list[dict]:
+    try:
+        response = requests.get(
+            feed_url,
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0 HumanGroupBot/1.0"},
+        )
+        response.raise_for_status()
+        root = ElementTree.fromstring(response.content)
+    except (requests.RequestException, ElementTree.ParseError):
+        return []
+    result = []
+    entries = [
+        element
+        for element in root.iter()
+        if str(element.tag).rsplit("}", 1)[-1].casefold() in {"item", "entry"}
+    ]
+    for entry in entries[:12]:
+        title = _strip_html_fragment(_feed_child_text(entry, {"title"}))
+        summary = _strip_html_fragment(
+            _feed_child_text(entry, {"description", "summary", "content"})
+        )
+        published_date = _feed_date(
+            _feed_child_text(entry, {"pubdate", "published", "updated", "date"})
+        )
+        url = _feed_entry_url(entry, feed_url)
+        if not title or not summary or not published_date or not url:
+            continue
+        result.append(
+            {
+                "title": title,
+                "publisher": publisher,
+                "published_date": published_date,
+                "url": url,
+                "summary": summary[:320],
+                "why_it_matters": "",
+                "entities": [publisher],
+            }
+        )
+    return result
+
+
+def _discover_official_feed_items(subscription: dict) -> list[dict]:
+    """Read allow-listed first-party RSS/Atom feeds without search discovery."""
+    subscribed = set(subscription.get("companies", []))
+    tasks = [
+        (publisher, feed_url)
+        for publisher, feed_urls in OFFICIAL_NEWS_FEEDS.items()
+        if publisher in subscribed
+        for feed_url in feed_urls
+    ]
+    if not tasks:
+        return []
+    result = []
+    with ThreadPoolExecutor(max_workers=min(8, len(tasks))) as executor:
+        futures = [
+            executor.submit(_read_official_feed, publisher, feed_url)
+            for publisher, feed_url in tasks
+        ]
+        for future in futures:
+            try:
+                result.extend(future.result())
+            except Exception:
+                continue
+    return result
 
 
 def _verify_x_post(item: dict, allowed_handles: list[str]) -> dict | None:
@@ -473,6 +728,57 @@ def _verify_x_post(item: dict, allowed_handles: list[str]) -> dict | None:
     )
     if published_date:
         result["published_date"] = published_date
+    return result
+
+
+def _discover_direct_x_items(subscription: dict) -> list[dict]:
+    """Discover recent X status URLs directly from selected public profiles."""
+    proxy_url = os.getenv("X_PROXY_URL", "").strip()
+    if not proxy_url:
+        return []
+    proxies = {"http": proxy_url, "https": proxy_url}
+    handles = [
+        handle
+        for handle in subscription.get("x_accounts", [])
+        if handle.casefold() in DIRECT_X_DISCOVERY_HANDLES
+    ]
+    result = []
+    for handle in handles:
+        try:
+            response = requests.get(
+                f"https://x.com/{handle}",
+                timeout=25,
+                # X serves a tiny fallback shell to bot-identifying user agents;
+                # a regular browser UA exposes the public status links.
+                headers={"User-Agent": "Mozilla/5.0"},
+                proxies=proxies,
+            )
+            if response.status_code != 200:
+                continue
+        except requests.RequestException:
+            continue
+        status_ids = list(
+            dict.fromkeys(
+                re.findall(
+                    rf"/{re.escape(handle)}/status/(\d+)",
+                    response.text,
+                    flags=re.I,
+                )
+            )
+        )[-8:]
+        result.extend(
+            {
+                "title": f"@{handle} 官方 X 原帖",
+                "publisher": f"@{handle}",
+                "x_handle": handle,
+                "published_date": "",
+                "url": f"https://x.com/{handle}/status/{status_id}",
+                "summary": "官方 X 原帖，正文将在发送前再次核验。",
+                "why_it_matters": "",
+                "entities": [handle],
+            }
+            for status_id in status_ids
+        )
     return result
 
 
@@ -570,10 +876,12 @@ def collect_tech_news(
     *,
     now: datetime | None = None,
     verify_pages: bool = True,
+    lookback_days: int = NEWS_LOOKBACK_DAYS,
 ) -> list[dict]:
     current = now.astimezone(SHANGHAI) if now else datetime.now(SHANGHAI)
+    lookback_days = max(1, min(int(lookback_days), 180))
     today = current.strftime("%Y-%m-%d")
-    start_date = (current - timedelta(days=NEWS_LOOKBACK_DAYS - 1)).strftime(
+    start_date = (current - timedelta(days=lookback_days - 1)).strftime(
         "%Y-%m-%d"
     )
     accounts = subscription["public_accounts"]
@@ -583,11 +891,11 @@ def collect_tech_news(
         (accounts[index : index + 3], [], [])
         for index in range(0, len(accounts), 3)
     ] + [
-        ([], companies[index : index + 4], [])
-        for index in range(0, len(companies), 4)
+        ([], companies[index : index + 5], [])
+        for index in range(0, len(companies), 5)
     ] + [
-        ([], [], x_accounts[index : index + 4])
-        for index in range(0, len(x_accounts), 4)
+        ([], [], x_accounts[index : index + 5])
+        for index in range(0, len(x_accounts), 5)
     ]
     raw_items = []
     for batch_accounts, batch_companies, batch_x_accounts in batches:
@@ -615,6 +923,7 @@ def collect_tech_news(
   "url":"原文 HTTPS 直链",
   "summary":"80至140字中文事实摘要",
   "why_it_matters":"一句话说明对 AI 产业或研究的意义",
+  "category":"只能从：模型与研究、产品与 Agent、算力与芯片、机器人与具身、资本与组织、治理与安全、企业动态 中选择",
   "entities":["涉及企业或模型"]
 }}]}}
 请分别检索本批每个来源，最多返回 5 条；宁可少报，不要猜测。
@@ -622,7 +931,7 @@ def collect_tech_news(
         search_prompt = (
             f"分别检索这些公众号 {batch_accounts}、科技企业 {batch_companies} "
             f"和官方 X 账号 {batch_x_accounts} "
-            f"最近 {NEWS_LOOKBACK_DAYS} 天的 AI 原文。优先 mp.weixin.qq.com 原文以及企业官网 "
+            f"最近 {lookback_days} 天的 AI 原文。优先 mp.weixin.qq.com 原文以及企业官网 "
             "newsroom/blog/research 或 x.com/账号/status/数字ID；拒绝聚合转载、无日期页面、"
             "X 搜索页、回复和无法确认发布者的链接。"
             "搜索结果：{search_result}"
@@ -646,11 +955,20 @@ def collect_tech_news(
             continue
         raw_items.extend(payload.get("items", [])[:8])
 
+    # Direct feeds and X discovery supplement model-assisted search. Every URL
+    # still goes through the same publisher, date and page verification below.
+    if verify_pages:
+        raw_items.extend(_discover_official_feed_items(subscription))
+
+    # Direct discovery supplements model-assisted search for key OpenAI/Codex
+    # accounts. Each URL still goes through the same oEmbed author/date check.
+    raw_items.extend(_discover_direct_x_items(subscription))
+
     result = []
     seen = set()
     allowed_dates = {
         (current - timedelta(days=offset)).strftime("%Y-%m-%d")
-        for offset in range(NEWS_LOOKBACK_DAYS)
+        for offset in range(lookback_days)
     }
     for raw in raw_items:
         if not isinstance(raw, dict):
@@ -677,6 +995,7 @@ def collect_tech_news(
             "why_it_matters": re.sub(
                 r"\s+", " ", str(raw.get("why_it_matters") or "")
             ).strip()[:220],
+            "category": str(raw.get("category") or "").strip(),
             "entities": _normalize_names(list(raw.get("entities") or []), limit=8),
             "source_type": source_type,
             "verified": True,
@@ -687,6 +1006,11 @@ def collect_tech_news(
                 print(f"X 原帖核验失败，跳过: {title} | {url}", flush=True)
                 continue
             item = verified_x
+            source_text = re.sub(
+                r"\s+", " ", str(item.get("source_text") or "")
+            ).strip()
+            if source_text:
+                item["summary"] = source_text[:320]
         elif verify_pages and not _page_is_accessible_and_consistent(item, source_type):
             print(f"资讯原文核验失败，跳过: {title} | {url}", flush=True)
             continue
@@ -694,6 +1018,7 @@ def collect_tech_news(
             continue
         seen.add(url)
         result.append(item)
+    result.sort(key=lambda item: item.get("published_date", ""), reverse=True)
     return _deduplicate_events(result)[:10]
 
 
@@ -863,32 +1188,74 @@ def send_tech_news_digest(
     from feishu_sender import get_token
 
     current = now.astimezone(SHANGHAI) if now else datetime.now(SHANGHAI)
+    visible_items = items[:10]
+    grouped: dict[str, list[tuple[int, dict]]] = {
+        category: [] for category in NEWS_CATEGORY_ORDER
+    }
+    for index, item in enumerate(visible_items, start=1):
+        grouped[_news_category(item)].append((index, item))
+    active_categories = [
+        category for category in NEWS_CATEGORY_ORDER if grouped[category]
+    ]
+    publisher_count = len(
+        {
+            str(item.get("publisher") or "").strip().casefold()
+            for item in visible_items
+            if str(item.get("publisher") or "").strip()
+        }
+    )
     elements = [
         {
             "tag": "note",
             "elements": [
                 {
                     "tag": "plain_text",
-                    "content": "✅ 仅收录已核验的公众号原文、企业官网或官方 X 原帖；同一事件跨来源去重",
+                    "content": "仅收录已核验的一手原文 · 跨来源去重 · 已发送内容不重复推送",
                 }
             ],
-        }
+        },
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    f"**今晚速览**　`{len(visible_items)} 条`　"
+                    f"`{len(active_categories)} 类主题`　`{publisher_count} 个来源`\n"
+                    "覆盖模型、产品、Agent、算力、具身、资本与治理等重要动态。"
+                ),
+            },
+        },
     ]
-    for index, item in enumerate(items[:10], start=1):
-        entities = "、".join(item.get("entities", []))
-        content = (
-            f"**{index}. [{item['title']}]({item['url']})**\n"
-            f"`{item['source_type']}`　{item['publisher']}　{item['published_date']}\n\n"
-            f"{item['summary']}"
-        )
-        if item.get("why_it_matters"):
-            content += f"\n\n💡 **关注价值**：{item['why_it_matters']}"
-        if entities:
-            content += f"\n\n🏷 {entities}"
+    for category_index, category in enumerate(active_categories):
+        if category_index == 0:
+            elements.append({"tag": "hr"})
         elements.append(
-            {"tag": "div", "text": {"tag": "lark_md", "content": content}}
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f"### {NEWS_CATEGORY_ICONS[category]} {category}"
+                        f"　`{len(grouped[category])}`"
+                    ),
+                },
+            }
         )
-        if index < len(items[:10]):
+        for index, item in grouped[category]:
+            entities = " · ".join(item.get("entities", [])[:4])
+            content = (
+                f"**{index:02d}｜[{item['title']}]({item['url']})**\n"
+                f"{item['publisher']}　·　`{item['source_type']}`　·　{item['published_date']}\n\n"
+                f"{item['summary']}"
+            )
+            if item.get("why_it_matters"):
+                content += f"\n\n> 💡 {item['why_it_matters']}"
+            if entities:
+                content += f"\n\n`{entities}`"
+            elements.append(
+                {"tag": "div", "text": {"tag": "lark_md", "content": content}}
+            )
+        if category_index < len(active_categories) - 1:
             elements.append({"tag": "hr"})
     if archive_url:
         elements.append(
@@ -907,11 +1274,11 @@ def send_tech_news_digest(
     card = {
         "config": {"wide_screen_mode": True, "enable_forward": True},
         "header": {
-            "template": "turquoise",
-            "title": {"tag": "plain_text", "content": "AI 科技情报晚报"},
+            "template": "indigo",
+            "title": {"tag": "plain_text", "content": "🌙 AI 科技情报 · 晚报"},
             "subtitle": {
                 "tag": "plain_text",
-                "content": f"{current:%Y-%m-%d} · 公众号 + 企业官网 + 官方 X",
+                "content": f"{current:%Y年%m月%d日} · {len(visible_items)} 条可信原文",
             },
         },
         "elements": elements,
@@ -977,15 +1344,65 @@ def _delivered_urls(chat_id: str) -> set[str]:
         }
 
 
+def _delivered_items(chat_id: str) -> list[dict]:
+    """Load prior delivery metadata so the same event is not resent via a new URL."""
+    init_tech_news()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT url, title, summary, publisher, entities_json
+            FROM news_deliveries WHERE chat_id=?
+            ORDER BY delivered_at DESC LIMIT 500
+            """,
+            (chat_id,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            entities = json.loads(row["entities_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            entities = []
+        result.append(
+            {
+                "url": str(row["url"] or ""),
+                "title": str(row["title"] or ""),
+                "summary": str(row["summary"] or ""),
+                "publisher": str(row["publisher"] or ""),
+                "entities": entities,
+            }
+        )
+    return result
+
+
+def _is_previously_delivered(item: dict, delivered_items: list[dict]) -> bool:
+    url = str(item.get("url") or "")
+    for delivered in delivered_items:
+        if url and url == str(delivered.get("url") or ""):
+            return True
+        if delivered.get("title") and _same_event(item, delivered):
+            return True
+    return False
+
+
 def _mark_news_run(chat_id: str, items: list[dict], now: datetime) -> None:
+    init_tech_news()
     with _connect() as conn:
         for item in items:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO news_deliveries (chat_id, url, delivered_at)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO news_deliveries
+                (chat_id, url, delivered_at, title, summary, publisher, entities_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (chat_id, item["url"], now.isoformat(timespec="seconds")),
+                (
+                    chat_id,
+                    item["url"],
+                    now.isoformat(timespec="seconds"),
+                    str(item.get("title") or ""),
+                    str(item.get("summary") or ""),
+                    str(item.get("publisher") or ""),
+                    json.dumps(item.get("entities") or [], ensure_ascii=False),
+                ),
             )
         conn.execute(
             """
@@ -1004,12 +1421,25 @@ def dispatch_due_tech_news(now: datetime | None = None) -> int:
     current = now.astimezone(SHANGHAI) if now else datetime.now(SHANGHAI)
     total = 0
     for subscription in due_news_subscriptions(current):
-        delivered = _delivered_urls(subscription["chat_id"])
+        delivered = _delivered_items(subscription["chat_id"])
         items = [
             item
             for item in collect_tech_news(subscription, now=current)
-            if item["url"] not in delivered
+            if not _is_previously_delivered(item, delivered)
         ]
+        if not items:
+            print(
+                f"近 {NEWS_LOOKBACK_DAYS} 天无未发送可靠原文，回补近 90 天: "
+                f"{subscription['chat_id']}",
+                flush=True,
+            )
+            items = [
+                item
+                for item in collect_tech_news(
+                    subscription, now=current, lookback_days=90
+                )
+                if not _is_previously_delivered(item, delivered)
+            ]
         if not items:
             print(
                 f"AI 科技晚报无新增可靠原文: {subscription['chat_id']}", flush=True

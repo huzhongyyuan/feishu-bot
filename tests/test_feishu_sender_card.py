@@ -113,6 +113,10 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
 
     card = json.loads(captured["json"]["content"])
     assert card["elements"][0]["tag"] == "div"
+    assert (
+        "🏷 [SIGGRAPH Asia 2026](https://arxiv.org/abs/2608.00001)"
+        in card["elements"][0]["text"]["content"]
+    )
     assert "开源代码" in card["elements"][1]["text"]["content"]
     assert "https://github.com/org/paper" in card["elements"][1]["text"]["content"]
     assert "Teaser" in card["elements"][2]["text"]["content"]
@@ -197,6 +201,48 @@ def test_unverified_open_source_paper_is_not_sent(monkeypatch):
                 }
             ),
         )
+
+
+def test_manual_no_code_exception_is_clearly_labelled(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"code": 0}
+
+    captured = {}
+    monkeypatch.setattr(feishu_sender, "get_token", lambda: "token")
+    monkeypatch.setattr(feishu_sender, "upload_image", lambda *args: "image-key")
+    monkeypatch.setattr(
+        feishu_sender.requests,
+        "post",
+        lambda *args, **kwargs: captured.update(kwargs) or Response(),
+    )
+    monkeypatch.setattr(
+        "paper_media.prepare_paper_images",
+        lambda data: [
+            {"path": "/tmp/teaser.jpg", "kind": "teaser", "label": "Figure 1", "caption": "Figure 1"},
+            {"path": "/tmp/architecture.jpg", "kind": "architecture", "label": "Figure 2", "caption": "Figure 2"},
+        ],
+    )
+    feishu_sender.send_message(
+        "oc_test",
+        json.dumps(
+            {
+                "title": "Closed-code Paper",
+                "paper_url": "https://arxiv.org/abs/2607.15038",
+                "venue": "arXiv",
+                "manual_no_code_exception": True,
+                "large_team_verified": True,
+            }
+        ),
+    )
+    card = json.loads(captured["json"]["content"])
+    content = str(card)
+    assert "官方代码尚未发布" in content
+    assert "不引用第三方复现" in content
+    assert "查看代码" not in content
 
 
 def test_paper_button_identifies_arxiv_link():

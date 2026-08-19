@@ -26,7 +26,8 @@ def test_recent_candidates_issue_targeted_panorama_query(monkeypatch):
         topics=["全景相机", "全景视频"]
     )
 
-    assert len(queries) == 2
+    assert len(queries) == 3
+    assert any('all:"DeepSeek"' in query for query in queries)
     assert any('all:"omnidirectional camera"' in query for query in queries)
     assert {paper["id"] for paper in papers} == {"2608.00001", "2608.00002"}
 
@@ -40,7 +41,8 @@ def test_recent_candidates_skip_panorama_query_for_unrelated_topics(monkeypatch)
 
     monkeypatch.setattr(daily_paper, "_query_arxiv", fake_query)
     daily_paper.get_recent_arxiv_candidates(topics=["人体动作"])
-    assert len(queries) == 1
+    assert len(queries) == 2
+    assert any('all:"DeepSeek"' in query for query in queries)
 
 
 def test_rss_entry_is_normalized_and_detected_as_panorama():

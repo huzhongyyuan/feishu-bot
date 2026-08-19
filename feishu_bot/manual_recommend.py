@@ -25,6 +25,30 @@ from paper_opensource import (
 from paper_search import search_arxiv
 
 
+def official_source_links_repository(
+    arxiv_html: str,
+    code_url: str,
+    project_url: str = "",
+) -> bool:
+    """Verify either arXiv -> repository or arXiv -> project -> repository."""
+    normalized_code = str(code_url or "").rstrip("/").casefold()
+    normalized_project = str(project_url or "").rstrip("/").casefold()
+    official_text = str(arxiv_html or "").casefold()
+    if not normalized_code:
+        return False
+    if normalized_code in official_text:
+        return True
+    if not normalized_project or normalized_project not in official_text:
+        return False
+    response = requests.get(
+        project_url,
+        timeout=45,
+        headers={"User-Agent": "HumanGroupBot/1.0 official-code verifier"},
+    )
+    response.raise_for_status()
+    return normalized_code in response.text.casefold()
+
+
 def recommend_arxiv(
     arxiv_id: str,
     *,
@@ -32,6 +56,7 @@ def recommend_arxiv(
     project_url: str = "",
     chat_id: str = "",
     license_pending: bool = False,
+    allow_no_code: bool = False,
     topics: list[str] | None = None,
 ) -> dict:
     """Verify, enrich, archive and explicitly resend one requested paper."""
@@ -46,10 +71,32 @@ def recommend_arxiv(
     paper = papers[0]
     paper.update({"code_url": code_url, "project_url": project_url})
 
-    print("[2/7] 提取作者机构并核验官方仓库", flush=True)
+    print("[2/7] 提取作者机构并核验代码状态", flush=True)
     paper = enrich_papers_metadata([paper])[0]
-    verified = filter_open_source_large_team([paper])
-    if not verified:
+    if allow_no_code:
+        if code_url:
+            raise RuntimeError("无代码例外模式不得填写代码仓库")
+        if len(paper.get("authors", [])) < 5:
+            raise RuntimeError("无代码例外仅允许大团队论文")
+        paper.update(institution_impact(paper))
+        paper.update(
+            {
+                "manual_no_code_exception": True,
+                "code_release_status": "official_code_not_released",
+                "open_source_verified": False,
+                "large_team_verified": True,
+                "team_evidence": f"作者团队 {len(paper.get('authors', []))} 人",
+                "llm_open_source_verified": False,
+                "llm_open_source_evidence": (
+                    "用户明确允许单篇例外；官方项目页仅提供论文，"
+                    "未将第三方复现标记为官方代码。"
+                ),
+            }
+        )
+        verified = [paper]
+    else:
+        verified = filter_open_source_large_team([paper])
+    if not verified and not allow_no_code:
         # Very recent papers may not yet appear in web-search indexes. For an
         # explicit manual request, accept the deterministic path only when the
         # official arXiv HTML itself links to the exact repository and the
@@ -60,9 +107,12 @@ def recommend_arxiv(
             headers={"User-Agent": "HumanGroupBot/1.0 official-code verifier"},
         )
         official_html.raise_for_status()
-        normalized_code = code_url.rstrip("/").casefold()
-        if normalized_code not in official_html.text.casefold():
-            raise RuntimeError("arXiv 官方页未给出指定代码仓库")
+        if not official_source_links_repository(
+            official_html.text,
+            code_url,
+            project_url,
+        ):
+            raise RuntimeError("arXiv 官方页或其官方项目页未给出指定代码仓库")
         repository = verify_repository(code_url, paper)
         if not repository or len(paper.get("authors", [])) < 5:
             raise RuntimeError("官方仓库 API/README 或团队规模核验未通过")
@@ -75,17 +125,41 @@ def recommend_arxiv(
                 "team_evidence": f"作者团队 {len(paper.get('authors', []))} 人",
                 "official_source_code_verified": True,
                 "llm_open_source_verified": False,
-                "llm_open_source_evidence": "arXiv 官方页 Code 链接与 GitHub API/README 双重核验",
+                "llm_open_source_evidence": (
+                    "arXiv 官方页或其明确链接的项目页，以及 GitHub API/README 双重核验"
+                ),
             }
         )
-    else:
+    elif verified:
         paper = verified[0]
+
+    manual_exception_metadata = {}
+    if allow_no_code:
+        manual_exception_metadata = {
+            key: paper.get(key)
+            for key in (
+                "manual_no_code_exception",
+                "code_release_status",
+                "open_source_verified",
+                "large_team_verified",
+                "team_evidence",
+                "llm_open_source_verified",
+                "llm_open_source_evidence",
+                "code_url",
+                "project_url",
+            )
+        }
 
     print("[3/7] 生成论文导读", flush=True)
     analyzed = analyze_papers_batch([paper], topics=topics)
     if not analyzed:
         raise RuntimeError("论文导读生成失败")
     paper = analyzed[0]
+    # The analyzer returns a normalized object and older deployments do not
+    # know this intentionally narrow manual-only field. Restore the verified
+    # exception metadata so the final sender can distinguish it from an
+    # unverified closed-source paper.
+    paper.update(manual_exception_metadata)
     paper["card_title"] = "论文推荐"
     if license_pending:
         paper["code_license_status"] = "pending"
@@ -129,10 +203,11 @@ def recommend_arxiv(
 def main() -> None:
     parser = argparse.ArgumentParser(description="指定 arXiv 论文补发到飞书")
     parser.add_argument("arxiv_id")
-    parser.add_argument("--code-url", required=True)
+    parser.add_argument("--code-url", default="")
     parser.add_argument("--project-url", default="")
     parser.add_argument("--chat-id", default="")
     parser.add_argument("--license-pending", action="store_true")
+    parser.add_argument("--allow-no-code", action="store_true")
     parser.add_argument("--topic", action="append", dest="topics")
     args = parser.parse_args()
     lock_path = Path(f"/tmp/humangroupbot-manual-{args.arxiv_id}.lock")
@@ -149,6 +224,7 @@ def main() -> None:
             project_url=args.project_url,
             chat_id=args.chat_id,
             license_pending=args.license_pending,
+            allow_no_code=args.allow_no_code,
             topics=args.topics,
         )
     print(json.dumps(result, ensure_ascii=False), flush=True)

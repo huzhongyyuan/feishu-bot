@@ -1,4 +1,4 @@
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 import json
 
 

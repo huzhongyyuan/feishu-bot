@@ -1,9 +1,11 @@
-from daily_paper import daily_push
+from daily_paper import daily_push, recommendation_track_for_time
 from paper_archive import archive_unstored_papers
 from subscriptions import (
     due_subscriptions,
     due_weekly_subscriptions,
     ensure_default_subscription,
+    mark_daily_attempt,
+    mark_daily_failed,
     mark_pushed,
     mark_weekly_attempt,
     mark_weekly_completed,
@@ -17,15 +19,22 @@ def dispatch_due_subscriptions() -> None:
     ensure_default_news_subscription()
     for subscription in due_subscriptions():
         chat_id = subscription["chat_id"]
+        push_time = subscription["due_push_time"]
+        mark_daily_attempt(chat_id, push_time)
         try:
-            daily_push(chat_id=chat_id, topics=subscription["topics"])
+            daily_push(
+                chat_id=chat_id,
+                topics=subscription["topics"],
+                recommendation_track=recommendation_track_for_time(push_time),
+            )
         except Exception as exc:
+            mark_daily_failed(chat_id, push_time, str(exc))
             print(
-                f"每日论文推送失败，将稍后重试: {exc}",
+                f"每日论文推送失败，{60} 分钟后重试: {exc}",
                 flush=True,
             )
         else:
-            mark_pushed(chat_id, push_time=subscription["due_push_time"])
+            mark_pushed(chat_id, push_time=push_time)
     for subscription in due_weekly_subscriptions():
         chat_id = subscription["chat_id"]
         run_key = subscription["weekly_run_key"]

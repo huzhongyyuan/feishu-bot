@@ -176,7 +176,8 @@ def send_message(chat_id, text):
             "score":"-"
         }
 
-    if not (
+    manual_no_code_exception = bool(data.get("manual_no_code_exception"))
+    if not manual_no_code_exception and not (
         data.get("code_url")
         and (
             data.get("llm_open_source_verified")
@@ -219,6 +220,7 @@ def send_message(chat_id, text):
     abstract = format_latex_for_feishu(data.get("abstract", ""))
     abstract_zh = format_latex_for_feishu(data.get("abstract_zh", ""))
     venue = format_latex_for_feishu(data.get("venue") or data.get("source") or "arXiv")
+    venue_link = f"[{venue}]({paper_url})" if paper_url else venue
     authors = [str(value).strip() for value in data.get("authors", []) if str(value).strip()]
     institutions = [
         str(value).strip()
@@ -230,10 +232,15 @@ def send_message(chat_id, text):
     headline = f"""
 **{title}**
 
-⭐ {data.get('score','')}　　🏷 {venue}
+⭐ {data.get('score','')}　　🏷 {venue_link}
 """
 
 
+    source_status = (
+        f"{venue} · 官方来源已核验 · 官方代码尚未发布"
+        if manual_no_code_exception
+        else f"{venue} · 官方来源已核验"
+    )
     card = {
         "config":{
             "wide_screen_mode":True
@@ -251,7 +258,7 @@ def send_message(chat_id, text):
             },
             "subtitle":{
                 "tag":"plain_text",
-                "content": f"{venue} · 官方来源已核验"
+                "content": source_status
             }
         },
         "elements":[
@@ -276,15 +283,29 @@ def send_message(chat_id, text):
     )
     if repo_stars:
         code_label += f" · ⭐ {repo_stars}"
-    card["elements"].append(
-        {
-            "tag": "div",
-            "text": {
-                "tag": "lark_md",
-                "content": f"💻 **开源代码**：[{code_label}]({code_url})",
-            },
-        }
-    )
+    if code_url:
+        card["elements"].append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"💻 **开源代码**：[{code_label}]({code_url})",
+                },
+            }
+        )
+    elif manual_no_code_exception:
+        card["elements"].append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        "⚠️ **代码状态**：官方尚未发布代码或模型仓库；"
+                        "本卡片为用户明确允许的单篇例外，不引用第三方复现。"
+                    ),
+                },
+            }
+        )
     if int(data.get("institution_impact_tier") or 1) >= 2:
         impact_label = compact_card_text(
             data.get("institution_impact_label") or "影响力机构",

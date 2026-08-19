@@ -35,6 +35,15 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
 
+    def test_paper_pipeline_health(self):
+        with (
+            patch("source_health.health_snapshot", return_value=[]),
+            patch("paper_candidate_pool.pool_summary", return_value={"pending": 2}),
+        ):
+            response = self.client.get("/health/papers")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["candidate_pool"], {"pending": 2})
+
     def test_yuanbao_keyword_routes_from_any_position(self):
         self.assertTrue(main._is_yuanbao_request("请让元宝总结一下"))
         self.assertTrue(main._is_yuanbao_request("今天的新闻，交给元宝"))
@@ -169,6 +178,7 @@ class WebhookTests(unittest.TestCase):
                     "summary_en": "English guide.",
                     "abstract_zh": "中文摘要翻译。",
                     "abstract": "Official abstract.",
+                    "paper_url": "https://arxiv.org/abs/2608.00001",
                     "contributions": [],
                     "code_url": "https://github.com/org/paper",
                     "llm_open_source_verified": True,
@@ -184,6 +194,10 @@ class WebhookTests(unittest.TestCase):
         self.assertIn("English Guide", content)
         self.assertIn("摘要 · 中文翻译", content)
         self.assertIn("Abstract · English Original", content)
+        self.assertIn(
+            "🏷 [arXiv](https://arxiv.org/abs/2608.00001)",
+            content,
+        )
 
     def test_non_allowlisted_sender_is_ignored(self):
         payload = {

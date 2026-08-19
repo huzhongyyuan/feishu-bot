@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import html
 import re
 import urllib.parse
+from html.parser import HTMLParser
 
 import feedparser
+import requests
 
 
 ARXIV_API = "https://export.arxiv.org/api/query"
@@ -14,6 +17,66 @@ PAPER_ALIASES = {
     "infinite dance": "2603.13375",
     "uni3c": "2504.14899",
 }
+
+
+class _ArxivMetaParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.values: dict[str, list[str]] = {}
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.casefold() != "meta":
+            return
+        values = {str(key).casefold(): str(value) for key, value in attrs}
+        name = values.get("name", "")
+        content = values.get("content", "")
+        if name.startswith("citation_") and content:
+            self.values.setdefault(name, []).append(html.unescape(content).strip())
+
+
+def _display_author(value: str) -> str:
+    parts = [part.strip() for part in str(value).split(",", 1)]
+    return f"{parts[1]} {parts[0]}" if len(parts) == 2 and all(parts) else str(value).strip()
+
+
+def _fetch_arxiv_abs(arxiv_id: str) -> list[dict]:
+    """Use the official abstract-page metadata when the Atom API is limited."""
+    try:
+        response = requests.get(
+            f"https://arxiv.org/abs/{arxiv_id}",
+            timeout=45,
+            headers={"User-Agent": "HumanGroupBot/1.0 paper metadata fallback"},
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return []
+
+    parser = _ArxivMetaParser()
+    parser.feed(response.text)
+    values = parser.values
+    title = " ".join(values.get("citation_title", [])[:1]).strip()
+    abstract = " ".join(values.get("citation_abstract", [])[:1]).strip()
+    if not title or not abstract:
+        return []
+    paper_url = f"https://arxiv.org/abs/{arxiv_id}"
+    return [
+        {
+            "id": arxiv_id,
+            "title": re.sub(r"\s+", " ", title),
+            "authors": [_display_author(value) for value in values.get("citation_author", [])],
+            "abstract": re.sub(r"\s+", " ", abstract),
+            "summary": re.sub(r"\s+", " ", abstract),
+            "url": paper_url,
+            "paper_url": paper_url,
+            "pdf_url": (values.get("citation_pdf_url") or [f"https://arxiv.org/pdf/{arxiv_id}"])[0],
+            "published": (values.get("citation_date") or [""])[0],
+            "updated": (values.get("citation_online_date") or [""])[0],
+            "categories": [],
+            "source": "arXiv",
+            "verified_source": True,
+            "metadata_source": "official_arxiv_abs",
+        }
+    ]
 
 
 def _clean_query(text: str) -> str:
@@ -128,6 +191,9 @@ def search_arxiv(text: str, limit: int = 5) -> list[dict]:
     arxiv_id = _extract_arxiv_id(raw_text)
     if arxiv_id:
         papers = _query_arxiv({"id_list": arxiv_id})
+        if papers:
+            return papers
+        papers = _fetch_arxiv_abs(arxiv_id)
         if papers:
             return papers
 

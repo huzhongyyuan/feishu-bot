@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 
 
 CONFIG = json.loads(
-    Path("paper_config.json").read_text()
+    Path(__file__).resolve().with_name("paper_config.json").read_text()
 )
 
 
@@ -16,12 +16,12 @@ def parse_json_object(value):
             text = text[:-3].strip()
 
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}")
         if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start:end + 1], strict=False)
         raise
 
 
@@ -50,11 +50,14 @@ def rank_paper(paper):
 }}
 
 评分考虑：
-- 与研究方向相关性
+- 两条入选路径：大厂/头部实验室且具通用 AI 影响力，或与数字人、Motion Generation、具身智能、世界模型、视频高度相关
+- 大公司研究院、头部实验室、顶级高校/研究机构和顶会影响力
 - 创新性
 - 技术深度
 - 实验可信度
 - 对实验室项目价值
+
+大厂通用 AI 论文不因超出五个重点方向而被过滤。质量相近时，明确优先大厂/头部机构、官方代码已开源且社区影响力更高的论文。
 """
 
     try:

@@ -14,7 +14,7 @@ from daily_paper import (
     select_with_complete_images,
 )
 from feishu_sender import send_message, send_weekly_overview
-from glm_client import call_glm
+from automation_llm import call_automation_llm as call_glm
 from paper_search import _query_arxiv
 from paper_db import init_db, save_delivery, save_paper
 from feishu_docs import create_weekly_paper_document
@@ -23,6 +23,9 @@ from paper_opensource import filter_open_source_large_team
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 DEFAULT_TOPICS = [
+    "数字人",
+    "Motion Generation",
+    "具身智能",
     "世界模型",
     "视频生成",
     "人体动作",
@@ -30,6 +33,18 @@ DEFAULT_TOPICS = [
     "全景视频",
 ]
 DOMAIN_KEYWORDS = {
+    "数字人": [
+        "digital human", "virtual human", "human avatar", "talking head",
+        "audio-driven avatar", "neural avatar", "human animation",
+    ],
+    "Motion Generation": [
+        "motion generation", "text-to-motion", "human motion generation",
+        "motion synthesis", "motion editing", "gesture generation",
+    ],
+    "具身智能": [
+        "embodied ai", "embodied intelligence", "vision-language-action",
+        "vla", "robot learning", "robot manipulation", "humanoid robot",
+    ],
     "世界模型": [
         "world model", "world-model", "embodied", "robot", "vla",
         "vision-language-action", "action model", "simulator", "planning",
