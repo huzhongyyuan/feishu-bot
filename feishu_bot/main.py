@@ -563,6 +563,16 @@ def _is_private_chat(message: dict) -> bool:
     return str(message.get("chat_type") or "").strip().casefold() == "p2p"
 
 
+def _private_chat_owner_open_id(allowed_open_id_values: list[str]) -> str:
+    """Resolve the sole private-chat owner; fail closed when none is configured."""
+    configured = os.getenv("FEISHU_PRIVATE_OWNER_OPEN_ID", "").strip()
+    if configured:
+        return configured
+    # Backward-compatible migration: the original owner is the first entry in
+    # FEISHU_ALLOWED_OPEN_IDS; later entries are group-only collaborators.
+    return allowed_open_id_values[0] if allowed_open_id_values else ""
+
+
 def _chat_answer(text: str, chat_id: str = "") -> str:
     from chat_memory import preferred_chat_provider
 
@@ -814,16 +824,22 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     chat_id = message.get("chat_id")
     if not chat_id:
         raise HTTPException(status_code=400, detail="missing chat_id")
-    allowed_open_ids = {
+    allowed_open_id_values = [
         value.strip()
         for value in os.getenv("FEISHU_ALLOWED_OPEN_IDS", "").split(",")
         if value.strip()
-    }
+    ]
+    allowed_open_ids = set(allowed_open_id_values)
     allowed_chat_ids = {
         value.strip()
         for value in os.getenv("FEISHU_ALLOWED_CHAT_IDS", "").split(",")
         if value.strip()
     }
+    if _is_private_chat(message):
+        private_owner_open_id = _private_chat_owner_open_id(allowed_open_id_values)
+        if not private_owner_open_id or sender_open_id != private_owner_open_id:
+            logger.info("忽略非主人私聊 sender_open_id=%s", sender_open_id)
+            return {"code": 0}
     if (
         allowed_open_ids
         and sender_open_id not in allowed_open_ids
