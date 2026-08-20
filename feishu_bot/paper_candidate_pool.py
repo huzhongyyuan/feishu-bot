@@ -11,7 +11,7 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "paper_candidates.db"
 MAX_ATTEMPTS = 6
-RETENTION_DAYS = 14
+RETENTION_DAYS = 30
 
 
 def _now() -> datetime:

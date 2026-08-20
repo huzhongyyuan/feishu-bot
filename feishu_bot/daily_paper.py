@@ -21,7 +21,7 @@ load_dotenv()
 
 
 LIBRARY = "paper_library.json"
-RECENT_LOOKBACK_DAYS = 14
+RECENT_LOOKBACK_DAYS = 30
 PANORAMA_QUERY = (
     '(all:"panoramic camera" OR all:"omnidirectional camera" OR '
     'all:"360-degree video" OR all:"360 video" OR all:"spherical video" OR '
@@ -844,7 +844,7 @@ def daily_push(
         if not paper_delivered(target_chat_id, p.get('title',''))
     ]
 
-    # 每次都从最近 14 天补足较大的候选池，避免当天新论文尚未公开代码时无文可推；
+    # 每次都从最近 30 天补足较大的候选池，避免当天新论文尚未公开代码时无文可推；
     # 仍按 chat 去重，最终只会留下通过三层开源核验的论文。
     if len(papers) < 24:
         identities = {p.get("id") or p.get("title", "") for p in papers}

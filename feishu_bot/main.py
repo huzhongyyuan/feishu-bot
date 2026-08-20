@@ -558,6 +558,11 @@ def _message_mentions_bot(message: dict) -> bool:
     return False
 
 
+def _is_private_chat(message: dict) -> bool:
+    """Feishu p2p messages address the bot directly and contain no @ mention."""
+    return str(message.get("chat_type") or "").strip().casefold() == "p2p"
+
+
 def _chat_answer(text: str, chat_id: str = "") -> str:
     from chat_memory import preferred_chat_provider
 
@@ -842,7 +847,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
         logger.info("忽略服务启动前的历史消息 create_time=%s", message.get("create_time"))
         return {"code": 0}
 
-    if not _message_mentions_bot(message):
+    if not _is_private_chat(message) and not _message_mentions_bot(message):
         logger.info("忽略未 @ 机器人的群消息 chat_id=%s", chat_id)
         return {"code": 0}
 

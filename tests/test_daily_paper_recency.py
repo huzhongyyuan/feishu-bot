@@ -10,11 +10,11 @@ def _paper(days_ago: int) -> dict:
 
 
 def test_recent_paper_is_allowed():
-    assert published_within_lookback(_paper(13))
+    assert published_within_lookback(_paper(29))
 
 
 def test_old_paper_is_rejected():
-    assert not published_within_lookback(_paper(15))
+    assert not published_within_lookback(_paper(31))
 
 
 def test_missing_or_invalid_date_is_rejected():
