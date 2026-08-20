@@ -498,3 +498,34 @@ def test_cross_source_duplicate_prefers_official_company_page():
     result = tech_news._deduplicate_events(items)
     assert len(result) == 1
     assert result[0]["source_type"] == "企业官方"
+
+
+def test_localize_news_summaries_translates_english_copy(monkeypatch):
+    monkeypatch.setattr(
+        tech_news,
+        "call_glm",
+        lambda *args, **kwargs: json.dumps(
+            {
+                "items": [
+                    {
+                        "id": 0,
+                        "summary": "Google 发布了搜索学习功能更新，用户可以围绕已核验原文中介绍的工具完成学习任务。",
+                        "why_it_matters": "该更新展示了 AI 搜索在学习场景中的产品化进展。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+    )
+    items = tech_news._localize_news_summaries(
+        [
+            {
+                "title": "5 new ways to level up your learning with Search",
+                "publisher": "Google AI/Gemini",
+                "summary": "Five new AI-powered learning features are now available in Search.",
+                "why_it_matters": "",
+            }
+        ]
+    )
+    assert items[0]["summary"].startswith("Google 发布")
+    assert "AI 搜索" in items[0]["why_it_matters"]

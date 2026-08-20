@@ -833,6 +833,62 @@ def _deduplicate_events(items: list[dict]) -> list[dict]:
     return result
 
 
+def _localize_news_summaries(items: list[dict]) -> list[dict]:
+    """Add faithful Chinese summaries to verified English source items."""
+    pending = []
+    for index, item in enumerate(items):
+        summary = str(item.get("summary") or "").strip()
+        chinese_count = len(re.findall(r"[\u4e00-\u9fff]", summary))
+        if summary and chinese_count < 12:
+            pending.append(
+                {
+                    "id": index,
+                    "title": str(item.get("title") or "")[:240],
+                    "publisher": str(item.get("publisher") or "")[:120],
+                    "source_summary": summary[:1200],
+                }
+            )
+    if not pending:
+        return items
+    prompt = f"""
+你是严格的 AI 科技资讯中文编辑。请只根据下面已核验条目的标题和原文摘要，
+生成适合飞书晚报的中文摘要。不联网，不猜测，不添加原文中没有的数字、结论或背景。
+
+要求：
+1. summary 为 60至120字中文事实摘要，保留必要的产品或模型英文名。
+2. why_it_matters 为 25至60字中文，仅说明从原文可直接推出的关注价值。
+3. 原文信息不足时就明确写“原文摘要未提供更多细节”，不要补写。
+4. 保留每条 id，只返回 JSON，不要 Markdown。
+
+输入：{json.dumps(pending, ensure_ascii=False)}
+
+返回格式：
+{{"items":[{{"id":0,"summary":"中文摘要","why_it_matters":"中文关注点"}}]}}
+"""
+    try:
+        payload = _parse_json_object(call_glm(prompt, timeout=240))
+    except Exception as exc:
+        print(f"AI 科技资讯中文摘要生成失败，保留原文: {exc}", flush=True)
+        return items
+    localized = {
+        raw.get("id"): raw
+        for raw in payload.get("items", [])
+        if isinstance(raw, dict) and isinstance(raw.get("id"), int)
+    }
+    result = [dict(item) for item in items]
+    for source in pending:
+        raw = localized.get(source["id"], {})
+        summary = re.sub(r"\s+", " ", str(raw.get("summary") or "")).strip()
+        why_it_matters = re.sub(
+            r"\s+", " ", str(raw.get("why_it_matters") or "")
+        ).strip()
+        if len(re.findall(r"[\u4e00-\u9fff]", summary)) >= 12:
+            result[source["id"]]["summary"] = summary[:320]
+            if len(re.findall(r"[\u4e00-\u9fff]", why_it_matters)) >= 8:
+                result[source["id"]]["why_it_matters"] = why_it_matters[:220]
+    return result
+
+
 def _page_is_accessible_and_consistent(item: dict, source_type: str) -> bool:
     url = _canonical_url(item.get("url"))
     try:
@@ -1019,7 +1075,7 @@ def collect_tech_news(
         seen.add(url)
         result.append(item)
     result.sort(key=lambda item: item.get("published_date", ""), reverse=True)
-    return _deduplicate_events(result)[:10]
+    return _localize_news_summaries(_deduplicate_events(result)[:10])
 
 
 def _archive_document(year: int) -> dict | None:
