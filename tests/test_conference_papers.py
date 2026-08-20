@@ -16,10 +16,12 @@ def test_parse_cvpr_official_list():
     ]
 
 
-def test_parse_eccv_only_keeps_official_2024_entries():
+def test_parse_eccv_only_keeps_official_2026_entries():
     html = (
-        '<dt class="ptitle"><br><a href=papers/eccv_2024/html/1.php>'
+        '<dt class="ptitle"><br><a href=papers/eccv_2026/html/1.php>'
         'Motion Generation</a></dt>'
+        '<dt class="ptitle"><br><a href=papers/eccv_2024/html/2.php>'
+        'Old Motion Paper</a></dt>'
         '<dt class="ptitle"><br><a href=other.html>Other</a></dt>'
     )
     papers = parse_official_list("eccv", html, "https://www.ecva.net/papers.php")
@@ -27,8 +29,53 @@ def test_parse_eccv_only_keeps_official_2024_entries():
     assert papers[0]["title"] == "Motion Generation"
 
 
-def test_active_sources_never_fall_back_to_eccv_2024():
-    assert all(source["venue"] != "ECCV 2024" for source in SOURCES)
+def test_active_sources_cover_requested_2026_venues_without_eccv_2024():
+    venues = {source["venue"] for source in SOURCES}
+    assert {"CVPR 2026", "ECCV 2026", "ICML 2026"} <= venues
+    assert "ECCV 2024" not in venues
+
+
+def test_siggraph_asia_requires_explicit_acceptance_claim(monkeypatch):
+    accepted = type(
+        "Entry",
+        (),
+        {
+            "id": "https://arxiv.org/abs/2608.12345v1",
+            "title": "A World Model for Video Generation",
+            "summary": "A world model for controllable video generation.",
+            "arxiv_comment": "Accepted to SIGGRAPH Asia 2026 Technical Papers",
+            "published": "2026-08-10T00:00:00Z",
+            "updated": "2026-08-10T00:00:00Z",
+            "authors": [{"name": "A"}],
+            "tags": [{"term": "cs.CV"}],
+        },
+    )()
+    submitted = type(
+        "Entry",
+        (),
+        {
+            "id": "https://arxiv.org/abs/2608.54321v1",
+            "title": "Submitted Video Paper",
+            "summary": "A video model.",
+            "arxiv_comment": "Submitted to SIGGRAPH Asia 2026",
+            "published": "2026-08-10T00:00:00Z",
+            "updated": "2026-08-10T00:00:00Z",
+            "authors": [{"name": "B"}],
+            "tags": [{"term": "cs.CV"}],
+        },
+    )()
+    response = type("Response", (), {"content": b"feed", "raise_for_status": lambda self: None})()
+    monkeypatch.setattr(conference_papers.requests, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(
+        conference_papers.feedparser,
+        "parse",
+        lambda value: type("Feed", (), {"entries": [accepted, submitted]})(),
+    )
+
+    papers = conference_papers._siggraph_asia_candidates(["世界模型"], set())
+    assert [paper["id"] for paper in papers] == ["2608.12345"]
+    assert papers[0]["venue"] == "SIGGRAPH Asia 2026"
+    assert papers[0]["conference_verified"] is False
 
 
 def test_panorama_topics_expand_to_english_conference_keywords():

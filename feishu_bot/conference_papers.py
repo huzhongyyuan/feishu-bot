@@ -20,6 +20,10 @@ CACHE_SECONDS = 24 * 60 * 60
 SIGGRAPH_VENUE = "SIGGRAPH 2026"
 SIGGRAPH_SCHEDULE_SEARCH = "https://s2026.conference-schedule.org/search"
 SIGGRAPH_LIST_CACHE = DATA_DIR / "siggraph_2026_schedule.json"
+SIGGRAPH_ASIA_VENUE = "SIGGRAPH Asia 2026"
+SIGGRAPH_ASIA_OFFICIAL_URL = (
+    "https://asia.siggraph.org/2026/submissions/technical-papers/"
+)
 
 SOURCES = [
     {
@@ -31,6 +35,11 @@ SOURCES = [
         "venue": "ICML 2026",
         "kind": "icml",
         "url": "https://icml.cc/virtual/2026/papers.html?filter=titles",
+    },
+    {
+        "venue": "ECCV 2026",
+        "kind": "eccv",
+        "url": "https://www.ecva.net/papers.php",
     },
 ]
 
@@ -131,7 +140,7 @@ def parse_official_list(kind: str, text: str, base_url: str) -> list[dict]:
         )
         for quoted, single, bare, title in pattern.findall(text):
             href = quoted or single or bare
-            if "eccv_2024" in href.casefold():
+            if "eccv_2026" in href.casefold():
                 matches.append((href, title))
     elif kind == "icml":
         matches = re.findall(
@@ -600,6 +609,94 @@ def _siggraph_candidates(
     return papers
 
 
+def _siggraph_asia_candidates(
+    topics: list[str] | None,
+    excluded: set[str],
+    limit: int = 8,
+) -> list[dict]:
+    """Discover explicit 2026 acceptance claims until the official title list ships."""
+    response = requests.get(
+        "https://export.arxiv.org/api/query",
+        params={
+            "search_query": 'all:"SIGGRAPH Asia 2026"',
+            "start": 0,
+            "max_results": 100,
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        },
+        timeout=60,
+        headers={"User-Agent": "HumanGroupBot/1.0"},
+    )
+    response.raise_for_status()
+    keywords = _keywords(topics)
+    ranked = []
+    for entry in feedparser.parse(response.content).entries:
+        title = _clean_html(getattr(entry, "title", ""))
+        normalized = _normalize_title(title)
+        comment = _clean_html(getattr(entry, "arxiv_comment", ""))
+        comment_lower = comment.casefold()
+        accepted = (
+            "siggraph asia 2026" in comment_lower
+            and any(marker in comment_lower for marker in ("accepted", "to appear"))
+            and not any(
+                marker in comment_lower
+                for marker in ("submitted", "under review", "planned to submit")
+            )
+        )
+        if not title or normalized in excluded or not accepted:
+            continue
+        abstract = _clean_html(getattr(entry, "summary", ""))
+        searchable = f"{title} {abstract}".casefold()
+        score = sum(
+            max(1, len(keyword.split()))
+            for keyword in keywords
+            if keyword in searchable
+        )
+        if score:
+            ranked.append((score, entry, title, abstract, comment))
+    ranked.sort(key=lambda item: -item[0])
+
+    papers = []
+    for _, entry, title, abstract, comment in ranked:
+        id_match = re.search(r"(\d{4}\.\d{4,5})", str(getattr(entry, "id", "")))
+        if not id_match:
+            continue
+        arxiv_id = id_match.group(1)
+        papers.append(
+            {
+                "id": arxiv_id,
+                "title": title,
+                "authors": [
+                    str(author.get("name") or "").strip()
+                    for author in getattr(entry, "authors", [])
+                    if str(author.get("name") or "").strip()
+                ],
+                "abstract": abstract,
+                "summary": abstract,
+                "paper_url": f"https://arxiv.org/abs/{arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+                "published": str(getattr(entry, "published", "")),
+                "updated": str(getattr(entry, "updated", "")),
+                "categories": [
+                    str(tag.get("term") or "")
+                    for tag in getattr(entry, "tags", [])
+                    if str(tag.get("term") or "")
+                ],
+                "source": "arXiv 作者录用声明（等待 SIGGRAPH Asia 2026 官网标题表复核）",
+                "venue": SIGGRAPH_ASIA_VENUE,
+                "verified_source": True,
+                "metadata_verified": True,
+                "conference_verified": False,
+                "venue_claim": comment,
+                "official_venue_url": SIGGRAPH_ASIA_OFFICIAL_URL,
+                "card_title": "SIGGRAPH Asia 论文推荐",
+            }
+        )
+        if len(papers) >= limit:
+            break
+    return papers
+
+
 def get_conference_candidates(
     topics: list[str] | None = None,
     *,
@@ -636,8 +733,24 @@ def get_conference_candidates(
         print(f"SIGGRAPH 2026 候选读取失败，继续使用其他会议来源: {exc}", flush=True)
         queues[SIGGRAPH_VENUE] = []
 
+    try:
+        queues[SIGGRAPH_ASIA_VENUE] = _siggraph_asia_candidates(
+            topics,
+            excluded,
+            limit=max(4, limit),
+        )
+    except Exception as exc:
+        print(
+            f"SIGGRAPH Asia 2026 候选读取失败，继续使用其他会议来源: {exc}",
+            flush=True,
+        )
+        queues[SIGGRAPH_ASIA_VENUE] = []
+
     selected: list[tuple[str, dict]] = []
-    venue_order = [source["venue"] for source in SOURCES] + [SIGGRAPH_VENUE]
+    venue_order = [source["venue"] for source in SOURCES] + [
+        SIGGRAPH_VENUE,
+        SIGGRAPH_ASIA_VENUE,
+    ]
     while len(selected) < max(1, min(limit, 8)):
         progressed = False
         for venue in venue_order:
@@ -652,7 +765,7 @@ def get_conference_candidates(
     papers = []
     changed = False
     for venue, item in selected:
-        if venue == SIGGRAPH_VENUE:
+        if venue in {SIGGRAPH_VENUE, SIGGRAPH_ASIA_VENUE}:
             papers.append(item)
             continue
         cache_key = venue + "|" + item["official_url"]
