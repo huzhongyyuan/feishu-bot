@@ -90,6 +90,13 @@ TOPIC_KEYWORDS = {
         "multimodal generation", "vision-language generation", "any-to-any",
         "interleaved generation",
     ],
+    "视觉 Agent（图像/视频/3D）": [
+        "visual agent", "vision agent", "agentic image generation",
+        "agentic video generation", "image generation agent", "video agent",
+        "image editing agent", "video editing agent", "3d agent",
+        "agentic 3d generation", "3d content generation agent",
+        "3d scene understanding agent", "computer-use vision agent",
+    ],
 }
 
 

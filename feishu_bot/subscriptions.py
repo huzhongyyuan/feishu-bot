@@ -21,6 +21,7 @@ DEFAULT_TOPICS = [
     "全景视频",
     "多模态",
     "多模态理解生成统一",
+    "视觉 Agent（图像/视频/3D）",
 ]
 DEFAULT_PUSH_TIMES = ["08:00", "20:00"]
 DEFAULT_WEEKLY_PUSH_WEEKDAY = 0  # Monday
@@ -126,7 +127,7 @@ def _normalize_topics(values: list[str]) -> list[str]:
             continue
         seen.add(topic)
         topics.append(topic)
-    return topics[:10]
+    return topics[:12]
 
 
 def get_subscription(chat_id: str, create: bool = True) -> dict | None:

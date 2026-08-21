@@ -490,6 +490,9 @@ FOCUS_TOPIC_MARKERS = (
     "multimodal", "multi-modal", "vision-language", "cross-modal", "omnimodal",
     "unified understanding and generation", "understanding and generation",
     "any-to-any", "interleaved generation",
+    "visual agent", "vision agent", "agentic image", "agentic video",
+    "image generation agent", "video agent", "image editing agent",
+    "video editing agent", "3d agent", "agentic 3d", "3d scene agent",
 )
 
 
@@ -705,7 +708,7 @@ def analyze_papers_batch(papers, topics=None, recommendation_track="balanced"):
     track_instruction = (
         "本轮是 08:00 大厂/高影响力场：优先大公司、顶级实验室、顶级高校和会影响行业技术路线的工作。"
         if recommendation_track == "major_impact"
-        else "本轮是 20:00 垂直主题场：优先数字人、Motion Generation、具身智能/VLA、世界模型、视频生成、多模态及理解生成统一。"
+        else "本轮是 20:00 垂直主题场：优先数字人、Motion Generation、具身智能/VLA、世界模型、视频生成、多模态及理解生成统一，以及图像/视频/3D 视觉 Agent。"
         if recommendation_track == "focus_topics"
         else "本轮采用影响力与主题相关性平衡排序。"
     )
@@ -741,7 +744,7 @@ def analyze_papers_batch(papers, topics=None, recommendation_track="balanced"):
 
 score 使用 0 到 10，候选满足以下任一路径即可保留：
 1. 大公司研究院/头部实验室发布、对通用 AI 有明显行业影响力的工作；
-2. 与数字人、Motion Generation、具身智能、世界模型、视频、多模态或多模态理解生成统一方向高度相关的工作。
+2. 与数字人、Motion Generation、具身智能、世界模型、视频、多模态、多模态理解生成统一，或图像/视频/3D 视觉 Agent 方向高度相关的工作。
 第一类不因超出当前重点方向而被过滤；第二类仍需较强主题相关性。两类都要考虑创新性、技术深度、实验可信度和项目价值。
 优先 OpenAI、Google/DeepMind、Meta、Microsoft、NVIDIA、Adobe、Apple、Amazon、字节、腾讯、阿里、百度等
 大厂研究团队，以及顶级高校/研究机构、顶会正式录用、官方仓库活跃度高的论文。机构名气不能掩盖方法薄弱、
