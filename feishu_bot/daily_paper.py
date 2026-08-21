@@ -431,6 +431,24 @@ def get_recent_arxiv_candidates(limit=40, topics=None):
         return []
 
 
+def get_tracked_recent_candidates(topics=None):
+    """Treat the recent-arXiv query as an optional enrichment source."""
+    from source_health import track_source
+
+    try:
+        return track_source(
+            "arxiv_recent",
+            lambda: get_recent_arxiv_candidates(topics=topics),
+            require_nonempty=True,
+        )
+    except Exception as exc:
+        print(
+            f"最近 arXiv 补充源不可用，继续使用 RSS/HF/会议与候选池: {exc}",
+            flush=True,
+        )
+        return []
+
+
 def _score_value(paper):
     try:
         return float(paper.get("score", 0))
@@ -848,11 +866,7 @@ def daily_push(
     # 仍按 chat 去重，最终只会留下通过三层开源核验的论文。
     if len(papers) < 24:
         identities = {p.get("id") or p.get("title", "") for p in papers}
-        for candidate in track_source(
-            "arxiv_recent",
-            lambda: get_recent_arxiv_candidates(topics=topics),
-            require_nonempty=True,
-        ):
+        for candidate in get_tracked_recent_candidates(topics=topics):
             identity = candidate.get("id") or candidate.get("title", "")
             if not identity or identity in identities:
                 continue

@@ -1,6 +1,19 @@
 from datetime import datetime, timedelta, timezone
 
 import daily_paper
+
+
+def test_recent_arxiv_enrichment_failure_is_non_fatal(monkeypatch):
+    import source_health
+
+    monkeypatch.setattr(
+        source_health,
+        "track_source",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("source returned no candidates")
+        ),
+    )
+    assert daily_paper.get_tracked_recent_candidates(["世界模型"]) == []
 from daily_paper import published_within_lookback, select_with_complete_images
 
 
