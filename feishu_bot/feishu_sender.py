@@ -217,6 +217,17 @@ def send_message(chat_id, text):
     paper_url = str(data.get("paper_url") or "").strip()
     title = format_latex_for_feishu(data.get("title", ""))
     summary = compact_card_text(data.get("summary", ""), limit=620)
+    one_line_insight = compact_card_text(
+        data.get("one_line_insight") or "",
+        limit=150,
+    )
+    if not one_line_insight:
+        core_insight_values = data.get("core_insights") or []
+        if core_insight_values and isinstance(core_insight_values[0], dict):
+            one_line_insight = compact_card_text(
+                core_insight_values[0].get("finding") or "",
+                limit=150,
+            )
     keywords = []
     raw_keywords = data.get("keywords") or []
     if isinstance(raw_keywords, str):
@@ -402,6 +413,17 @@ def send_message(chat_id, text):
                 "text": {
                     "tag": "lark_md",
                     "content": "🏷️ **Keywords**：" + " · ".join(keywords),
+                },
+            }
+        )
+
+    if one_line_insight:
+        card["elements"].append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"💡 **一句话 Insight**：{one_line_insight}",
                 },
             }
         )

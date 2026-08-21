@@ -63,6 +63,7 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
                 "title": "Paper",
                 "summary": "这是一段更完整的中文导读。",
                 "keywords": ["Motion Generation", "Diffusion", "Long Sequence"],
+                "one_line_insight": "分层时序建模的核心价值，是把长序列中的误差累积拆解到不同时间尺度。",
                 "summary_en": "This is the paired English reading guide.",
                 "abstract_zh": "这是英文摘要的完整中文翻译。",
                 "abstract": "This is the official English abstract.",
@@ -135,6 +136,12 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
         if element.get("tag") == "div"
         and "Keywords" in element.get("text", {}).get("content", "")
     )
+    insight_index = next(
+        index
+        for index, element in enumerate(card["elements"])
+        if element.get("tag") == "div"
+        and "一句话 Insight" in element.get("text", {}).get("content", "")
+    )
     architecture_index = next(
         index
         for index, element in enumerate(card["elements"])
@@ -142,8 +149,9 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
         and "网络 / 方法架构图" in element.get("text", {}).get("content", "")
     )
     assert keywords_index > 4
-    assert keywords_index < summary_index
+    assert keywords_index < insight_index < summary_index
     assert "Motion Generation · Diffusion · Long Sequence" in card["elements"][keywords_index]["text"]["content"]
+    assert "长序列中的误差累积" in card["elements"][insight_index]["text"]["content"]
     assert architecture_index > summary_index
     assert card["elements"][architecture_index + 1]["tag"] == "img"
     deep_panel = next(

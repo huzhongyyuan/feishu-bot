@@ -30,6 +30,7 @@ def analyze_paper(paper):
 "abstract":"",
 "summary":"",
 "keywords":["3至4个核心技术关键词"],
+"one_line_insight":"40至70字的一句话核心结论",
 "summary_en":"",
 "abstract_zh":"",
 "contributions":[],
@@ -47,6 +48,7 @@ def analyze_paper(paper):
 - summary_en 使用100至160个英文单词，与中文导读语义和结论强度一致
 - abstract_zh 是输入英文摘要的完整忠实中文翻译，不删减、不添加结论
 - keywords 必须为 3 至 4 个来自标题或摘要的精炼技术词，不写句子
+- one_line_insight 直接概括最值得带走的技术认知，只能依据摘要，不写空泛推荐语
 - 不要Markdown
 """
 
