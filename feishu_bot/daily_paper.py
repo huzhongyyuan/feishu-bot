@@ -13,6 +13,7 @@ import os
 import json
 import requests
 import re
+import time
 from paper_search import _query_arxiv
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +23,7 @@ load_dotenv()
 
 LIBRARY = "paper_library.json"
 RECENT_LOOKBACK_DAYS = 30
+ARXIV_RETRY_SECONDS = 2 * 60
 PANORAMA_QUERY = (
     '(all:"panoramic camera" OR all:"omnidirectional camera" OR '
     'all:"360-degree video" OR all:"360 video" OR all:"spherical video" OR '
@@ -435,18 +437,29 @@ def get_tracked_recent_candidates(topics=None):
     """Treat the recent-arXiv query as an optional enrichment source."""
     from source_health import track_source
 
-    try:
-        return track_source(
-            "arxiv_recent",
-            lambda: get_recent_arxiv_candidates(topics=topics),
-            require_nonempty=True,
-        )
-    except Exception as exc:
-        print(
-            f"最近 arXiv 补充源不可用，继续使用 RSS/HF/会议与候选池: {exc}",
-            flush=True,
-        )
-        return []
+    last_error = None
+    for attempt in range(2):
+        try:
+            return track_source(
+                "arxiv_recent",
+                lambda: get_recent_arxiv_candidates(topics=topics),
+                require_nonempty=True,
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt == 0:
+                print(
+                    "最近 arXiv 补充源被限流或暂时无结果，"
+                    f"{ARXIV_RETRY_SECONDS // 60} 分钟后自动重试一次",
+                    flush=True,
+                )
+                time.sleep(ARXIV_RETRY_SECONDS)
+    print(
+        f"最近 arXiv 补充源重试后仍不可用，"
+        f"继续使用 RSS/HF/会议与候选池: {last_error}",
+        flush=True,
+    )
+    return []
 
 
 def _score_value(paper):

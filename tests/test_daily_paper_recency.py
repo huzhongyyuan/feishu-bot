@@ -6,6 +6,7 @@ import daily_paper
 def test_recent_arxiv_enrichment_failure_is_non_fatal(monkeypatch):
     import source_health
 
+    sleeps = []
     monkeypatch.setattr(
         source_health,
         "track_source",
@@ -13,7 +14,29 @@ def test_recent_arxiv_enrichment_failure_is_non_fatal(monkeypatch):
             RuntimeError("source returned no candidates")
         ),
     )
+    monkeypatch.setattr(daily_paper.time, "sleep", sleeps.append)
     assert daily_paper.get_tracked_recent_candidates(["世界模型"]) == []
+    assert sleeps == [120]
+
+
+def test_recent_arxiv_enrichment_retries_once_after_two_minutes(monkeypatch):
+    import source_health
+
+    calls = []
+    sleeps = []
+
+    def fake_track(*args, **kwargs):
+        calls.append(args[0])
+        if len(calls) == 1:
+            raise RuntimeError("429 Too Many Requests")
+        return [{"id": "2608.12345", "title": "Recovered paper"}]
+
+    monkeypatch.setattr(source_health, "track_source", fake_track)
+    monkeypatch.setattr(daily_paper.time, "sleep", sleeps.append)
+    result = daily_paper.get_tracked_recent_candidates(["世界模型"])
+    assert [paper["id"] for paper in result] == ["2608.12345"]
+    assert calls == ["arxiv_recent", "arxiv_recent"]
+    assert sleeps == [120]
 from daily_paper import published_within_lookback, select_with_complete_images
 
 
