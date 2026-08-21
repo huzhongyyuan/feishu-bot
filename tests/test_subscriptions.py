@@ -48,6 +48,8 @@ class SubscriptionTests(unittest.TestCase):
         self.assertIn("具身智能", subscription["topics"])
         self.assertIn("全景相机", subscription["topics"])
         self.assertIn("全景视频", subscription["topics"])
+        self.assertIn("多模态", subscription["topics"])
+        self.assertIn("多模态理解生成统一", subscription["topics"])
 
     def test_due_subscription_respects_time_and_weekday(self):
         subscriptions.update_subscription(

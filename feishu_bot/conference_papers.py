@@ -80,6 +80,16 @@ TOPIC_KEYWORDS = {
         "equirectangular projection", "immersive video", "6dof video",
         "viewport prediction", "spherical video quality",
     ],
+    "多模态": [
+        "multimodal", "multi-modal", "vision-language", "vision language",
+        "cross-modal", "image-text", "audio-visual", "omnimodal",
+    ],
+    "多模态理解生成统一": [
+        "unified multimodal understanding and generation",
+        "unified understanding and generation", "understanding and generation",
+        "multimodal generation", "vision-language generation", "any-to-any",
+        "interleaved generation",
+    ],
 }
 
 

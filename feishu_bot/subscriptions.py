@@ -19,6 +19,8 @@ DEFAULT_TOPICS = [
     "人体动作",
     "全景相机",
     "全景视频",
+    "多模态",
+    "多模态理解生成统一",
 ]
 DEFAULT_PUSH_TIMES = ["08:00", "20:00"]
 DEFAULT_WEEKLY_PUSH_WEEKDAY = 0  # Monday
