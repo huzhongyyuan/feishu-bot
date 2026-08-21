@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import requests
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -216,6 +217,18 @@ def send_message(chat_id, text):
     paper_url = str(data.get("paper_url") or "").strip()
     title = format_latex_for_feishu(data.get("title", ""))
     summary = compact_card_text(data.get("summary", ""), limit=620)
+    keywords = []
+    raw_keywords = data.get("keywords") or []
+    if isinstance(raw_keywords, str):
+        raw_keywords = re.split(r"[,，、;；|]+", raw_keywords)
+    for value in raw_keywords:
+        keyword = compact_card_text(value, limit=36).strip(" #`·,，;；")
+        if keyword and keyword.casefold() not in {
+            item.casefold() for item in keywords
+        }:
+            keywords.append(keyword)
+        if len(keywords) >= 4:
+            break
     summary_en = format_latex_for_feishu(data.get("summary_en", ""))
     abstract = format_latex_for_feishu(data.get("abstract", ""))
     abstract_zh = format_latex_for_feishu(data.get("abstract_zh", ""))
@@ -381,6 +394,17 @@ def send_message(chat_id, text):
         )
 
     card["elements"].extend(teaser_image_elements)
+
+    if keywords:
+        card["elements"].append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "🏷️ **Keywords**：" + " · ".join(keywords),
+                },
+            }
+        )
 
     if summary:
         card["elements"].append(

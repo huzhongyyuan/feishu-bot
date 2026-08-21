@@ -495,6 +495,58 @@ FOCUS_TOPIC_MARKERS = (
     "video editing agent", "3d agent", "agentic 3d", "3d scene agent",
 )
 
+KEYWORD_PATTERNS = (
+    (("agentic", " agent", "multi-agent"), "Agent"),
+    (("multimodal", "multi-modal", "cross-modal"), "Multimodal"),
+    (("vision-language-action", " vla"), "VLA"),
+    (("video generation", "text-to-video", "image-to-video"), "Video Generation"),
+    (("image generation", "text-to-image", "image editing"), "Image Generation"),
+    (("3d generation", "3d creation", "3d scene", "3d asset"), "3D Generation"),
+    (("world model", "world modeling"), "World Model"),
+    (("motion generation", "motion synthesis", "text-to-motion"), "Motion Generation"),
+    (("digital human", "virtual human", "avatar"), "Digital Human"),
+    (("diffusion", "flow matching"), "Diffusion / Flow"),
+    (("gaussian splatting", "3dgs"), "3D Gaussian Splatting"),
+    (("reinforcement learning", " rl "), "Reinforcement Learning"),
+    (("large language model", " llm"), "LLM"),
+    (("transformer",), "Transformer"),
+)
+
+
+def _paper_keywords(paper: dict, generated=None) -> list[str]:
+    """Normalize 3–4 model keywords and deterministically fill omissions."""
+    if isinstance(generated, str):
+        raw_values = re.split(r"[,，、;；|]+", generated)
+    elif isinstance(generated, list):
+        raw_values = generated
+    else:
+        raw_values = []
+    result = []
+    for value in raw_values:
+        keyword = re.sub(r"\s+", " ", str(value or "")).strip(" #`·,，;；")
+        if keyword and len(keyword) <= 40 and keyword.casefold() not in {
+            item.casefold() for item in result
+        }:
+            result.append(keyword)
+        if len(result) >= 4:
+            return result
+
+    text = " ".join(
+        [
+            str(paper.get("title") or ""),
+            str(paper.get("abstract") or paper.get("summary") or ""),
+        ]
+    ).casefold()
+    padded_text = f" {text} "
+    for markers, label in KEYWORD_PATTERNS:
+        if any(marker in padded_text for marker in markers) and label.casefold() not in {
+            item.casefold() for item in result
+        }:
+            result.append(label)
+        if len(result) >= 4:
+            break
+    return result[:4]
+
 
 def recommendation_track_for_time(push_time=None) -> str:
     """Use mornings for broad high-impact work and evenings for focus topics."""
@@ -731,6 +783,7 @@ def analyze_papers_batch(papers, topics=None, recommendation_track="balanced"):
       "task": "一句话说明论文解决的研究任务，只能依据摘要",
       "main_method": "一到两句说明核心模型、模块或训练方法，只能依据摘要",
       "summary": "约220至300个中文字符的导读，依次说明研究问题、核心方法、关键结果和阅读价值，只能依据摘要",
+      "keywords": ["3至4个核心技术关键词"],
       "contributions": ["摘要直接支持的贡献1", "摘要直接支持的贡献2"],
       "score": 0,
       "reason": "推荐理由",
@@ -752,6 +805,7 @@ score 使用 0 到 10，候选满足以下任一路径即可保留：
 可以联网检索官方项目主页、官方代码、模型权重和机构发布，用作评分信号。
 只允许根据输入标题、摘要、Hugging Face 热度和联网检索结果生成中文解读与评分。不得生成或修改作者、日期、
 论文链接、PDF 链接、会议、期刊、项目主页或代码地址；不得编造实验结果。
+关键词必须为 3 至 4 个精炼的技术概念，不要写成句子，不得超出标题与摘要的信息。
 """
 
     try:
@@ -770,6 +824,7 @@ score 使用 0 到 10，候选满足以下任一路径即可保留：
         if not original:
             continue
         item["paper_url"] = original.get("paper_url", "")
+        item["keywords"] = _paper_keywords(original, item.get("keywords"))
         item["id"] = original.get("id", "")
         item["pdf_url"] = original.get("pdf_url", "")
         item["abstract"] = original.get("abstract", original.get("summary", ""))

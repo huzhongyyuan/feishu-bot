@@ -29,6 +29,7 @@ def analyze_paper(paper):
 "venue":"",
 "abstract":"",
 "summary":"",
+"keywords":["3至4个核心技术关键词"],
 "summary_en":"",
 "abstract_zh":"",
 "contributions":[],
@@ -45,6 +46,7 @@ def analyze_paper(paper):
 - summary 使用约220至340个中文字符的中文导读，覆盖问题、方法、关键结果和阅读价值，只能依据摘要
 - summary_en 使用100至160个英文单词，与中文导读语义和结论强度一致
 - abstract_zh 是输入英文摘要的完整忠实中文翻译，不删减、不添加结论
+- keywords 必须为 3 至 4 个来自标题或摘要的精炼技术词，不写句子
 - 不要Markdown
 """
 

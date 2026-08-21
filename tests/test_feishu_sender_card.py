@@ -62,6 +62,7 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
             {
                 "title": "Paper",
                 "summary": "这是一段更完整的中文导读。",
+                "keywords": ["Motion Generation", "Diffusion", "Long Sequence"],
                 "summary_en": "This is the paired English reading guide.",
                 "abstract_zh": "这是英文摘要的完整中文翻译。",
                 "abstract": "This is the official English abstract.",
@@ -128,13 +129,21 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
         if element.get("tag") == "div"
         and "中文导读" in element.get("text", {}).get("content", "")
     )
+    keywords_index = next(
+        index
+        for index, element in enumerate(card["elements"])
+        if element.get("tag") == "div"
+        and "Keywords" in element.get("text", {}).get("content", "")
+    )
     architecture_index = next(
         index
         for index, element in enumerate(card["elements"])
         if element.get("tag") == "div"
         and "网络 / 方法架构图" in element.get("text", {}).get("content", "")
     )
-    assert summary_index > 4
+    assert keywords_index > 4
+    assert keywords_index < summary_index
+    assert "Motion Generation · Diffusion · Long Sequence" in card["elements"][keywords_index]["text"]["content"]
     assert architecture_index > summary_index
     assert card["elements"][architecture_index + 1]["tag"] == "img"
     deep_panel = next(
