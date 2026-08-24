@@ -473,13 +473,15 @@ def _recommendation_priority(paper: dict) -> float:
     """Strongly prefer influential verified sources after the relevance gate."""
     tier = int(paper.get("institution_impact_tier") or 1)
     institution_bonus = {1: 0.0, 2: 0.65, 3: 1.1}.get(tier, 0.0)
-    conference_bonus = 0.3 if paper.get("conference_verified") else 0.0
+    venue_bonus = 0.3 if (
+        paper.get("conference_verified") or paper.get("journal_verified")
+    ) else 0.0
     try:
         stars = max(0, int(paper.get("repo_stars") or 0))
     except (TypeError, ValueError):
         stars = 0
     repository_bonus = min(0.25, stars / 4000)
-    return _score_value(paper) + institution_bonus + conference_bonus + repository_bonus
+    return _score_value(paper) + institution_bonus + venue_bonus + repository_bonus
 
 
 FOCUS_TOPIC_MARKERS = (
@@ -753,6 +755,7 @@ def analyze_papers_batch(papers, topics=None, recommendation_track="balanced"):
             "institution_impact_label": paper.get("institution_impact_label", ""),
             "team_evidence": paper.get("team_evidence", ""),
             "conference_verified": bool(paper.get("conference_verified")),
+            "journal_verified": bool(paper.get("journal_verified")),
             "repo_stars": int(paper.get("repo_stars") or 0),
         }
         for paper in papers
@@ -850,6 +853,7 @@ score 使用 0 到 10，候选满足以下任一路径即可保留：
             item[field] = original.get(field)
         item["metadata_verified"] = True
         item["conference_verified"] = bool(original.get("conference_verified"))
+        item["journal_verified"] = bool(original.get("journal_verified"))
         item["official_venue_url"] = original.get("official_venue_url", "")
         item["hf_upvotes"] = int(original.get("hf_upvotes") or 0)
         item["hf_comments"] = int(original.get("hf_comments") or 0)
@@ -931,7 +935,27 @@ def daily_push(
     except Exception as exc:
         print(f"会议官方候选获取失败，继续使用 arXiv/HF: {exc}", flush=True)
         conference_papers = []
-    papers = conference_papers + papers
+    try:
+        from tpami_source import get_tpami_candidates
+
+        tpami_papers = track_source(
+            "tpami_2026",
+            lambda: get_tpami_candidates(
+                topics,
+                exclude_titles=delivered_titles,
+                limit=4,
+            ),
+        )
+        if tpami_papers:
+            print(
+                "TPAMI 2026 官方候选: "
+                + " | ".join(paper.get("title", "") for paper in tpami_papers),
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"TPAMI 2026 候选获取失败，继续使用其他来源: {exc}", flush=True)
+        tpami_papers = []
+    papers = tpami_papers + conference_papers + papers
 
     papers=[
         p for p in papers

@@ -68,6 +68,7 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
                 "abstract_zh": "这是英文摘要的完整中文翻译。",
                 "abstract": "This is the official English abstract.",
                 "venue": "SIGGRAPH Asia 2026",
+                "official_venue_url": "https://doi.org/10.1109/TPAMI.2025.3646016",
                 "contributions": ["中文贡献"],
                 "main_method": "核心网络方法。",
                 "authors": ["Author"],
@@ -116,7 +117,7 @@ def test_teaser_and_architecture_are_visible_in_expected_positions(monkeypatch):
     card = json.loads(captured["json"]["content"])
     assert card["elements"][0]["tag"] == "div"
     assert (
-        "🏷 [SIGGRAPH Asia 2026](https://arxiv.org/abs/2608.00001)"
+        "🏷 [SIGGRAPH Asia 2026](https://doi.org/10.1109/TPAMI.2025.3646016)"
         in card["elements"][0]["text"]["content"]
     )
     assert "开源代码" in card["elements"][1]["text"]["content"]

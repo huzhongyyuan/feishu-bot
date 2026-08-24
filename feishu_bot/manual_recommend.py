@@ -58,6 +58,8 @@ def recommend_arxiv(
     license_pending: bool = False,
     allow_no_code: bool = False,
     topics: list[str] | None = None,
+    venue: str = "",
+    official_venue_url: str = "",
 ) -> dict:
     """Verify, enrich, archive and explicitly resend one requested paper."""
     target_chat_id = (chat_id or os.getenv("FEISHU_CHAT_ID") or "").strip()
@@ -70,6 +72,14 @@ def recommend_arxiv(
         raise RuntimeError(f"arXiv 未返回指定论文：{arxiv_id}")
     paper = papers[0]
     paper.update({"code_url": code_url, "project_url": project_url})
+    if venue:
+        paper.update(
+            {
+                "venue": venue,
+                "journal_verified": True,
+                "official_venue_url": official_venue_url,
+            }
+        )
 
     print("[2/7] 提取作者机构并核验代码状态", flush=True)
     paper = enrich_papers_metadata([paper])[0]
@@ -155,6 +165,14 @@ def recommend_arxiv(
     if not analyzed:
         raise RuntimeError("论文导读生成失败")
     paper = analyzed[0]
+    if venue:
+        paper.update(
+            {
+                "venue": venue,
+                "journal_verified": True,
+                "official_venue_url": official_venue_url,
+            }
+        )
     # The analyzer returns a normalized object and older deployments do not
     # know this intentionally narrow manual-only field. Restore the verified
     # exception metadata so the final sender can distinguish it from an
@@ -208,6 +226,8 @@ def main() -> None:
     parser.add_argument("--chat-id", default="")
     parser.add_argument("--license-pending", action="store_true")
     parser.add_argument("--allow-no-code", action="store_true")
+    parser.add_argument("--venue", default="")
+    parser.add_argument("--official-venue-url", default="")
     parser.add_argument("--topic", action="append", dest="topics")
     args = parser.parse_args()
     lock_path = Path(f"/tmp/humangroupbot-manual-{args.arxiv_id}.lock")
@@ -226,6 +246,8 @@ def main() -> None:
             license_pending=args.license_pending,
             allow_no_code=args.allow_no_code,
             topics=args.topics,
+            venue=args.venue,
+            official_venue_url=args.official_venue_url,
         )
     print(json.dumps(result, ensure_ascii=False), flush=True)
 

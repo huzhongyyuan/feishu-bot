@@ -244,7 +244,9 @@ def send_message(chat_id, text):
     abstract = format_latex_for_feishu(data.get("abstract", ""))
     abstract_zh = format_latex_for_feishu(data.get("abstract_zh", ""))
     venue = format_latex_for_feishu(data.get("venue") or data.get("source") or "arXiv")
-    venue_link = f"[{venue}]({paper_url})" if paper_url else venue
+    official_venue_url = str(data.get("official_venue_url") or "").strip()
+    venue_url = official_venue_url or paper_url
+    venue_link = f"[{venue}]({venue_url})" if venue_url else venue
     authors = [str(value).strip() for value in data.get("authors", []) if str(value).strip()]
     institutions = [
         str(value).strip()
