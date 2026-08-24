@@ -10,7 +10,7 @@ import requests
 from paper_search import _query_arxiv
 
 
-CROSSREF_WORKS = "https://api.crossref.org/works"
+CROSSREF_WORKS = "https://api.crossref.org/journals/0162-8828/works"
 TPAMI_NAME = "IEEE Transactions on Pattern Analysis and Machine Intelligence"
 GENERAL_VISION_MARKERS = (
     "image", "video", "vision", "visual", "3d", "multimodal", "motion",
@@ -46,7 +46,6 @@ def get_tpami_candidates(
     response = requests.get(
         CROSSREF_WORKS,
         params={
-            "query.container-title": TPAMI_NAME,
             "filter": "from-pub-date:2026-01-01,until-pub-date:2026-12-31,type:journal-article",
             "sort": "published",
             "order": "desc",
