@@ -173,6 +173,8 @@ TRUSTED_PDF_HOSTS = {
     "openaccess.thecvf.com",
     "openreview.net",
     "proceedings.mlr.press",
+    "roboticsproceedings.org",
+    "www.roboticsproceedings.org",
     "icml.cc",
     "raw.githubusercontent.com",
 }

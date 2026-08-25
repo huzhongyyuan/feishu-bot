@@ -110,6 +110,14 @@ def test_untrusted_pdf_host_is_rejected():
     assert _validated_pdf_url(paper) == ""
 
 
+def test_official_rss_pdf_host_is_accepted():
+    paper = {
+        "title": "RSS Paper",
+        "pdf_url": "https://www.roboticsproceedings.org/rss22/p003.pdf",
+    }
+    assert _validated_pdf_url(paper) == paper["pdf_url"]
+
+
 def test_method_diagram_beats_qualitative_or_analysis_figure():
     figures = [
         {"number": 1, "page_index": 0, "caption_confidence": 2, "caption": "Figure 1. Teaser."},

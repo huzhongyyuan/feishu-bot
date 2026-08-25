@@ -24,6 +24,10 @@ SIGGRAPH_ASIA_VENUE = "SIGGRAPH Asia 2026"
 SIGGRAPH_ASIA_OFFICIAL_URL = (
     "https://asia.siggraph.org/2026/submissions/technical-papers/"
 )
+RSS_VENUE = "RSS 2026"
+RSS_OFFICIAL_URL = "https://roboticsconference.org/program/papers/"
+CORL_VENUE = "CoRL 2026"
+CORL_OFFICIAL_URL = "https://www.corl.org/program"
 
 SOURCES = [
     {
@@ -40,6 +44,11 @@ SOURCES = [
         "venue": "ECCV 2026",
         "kind": "eccv",
         "url": "https://www.ecva.net/papers.php",
+    },
+    {
+        "venue": RSS_VENUE,
+        "kind": "rss",
+        "url": RSS_OFFICIAL_URL,
     },
 ]
 
@@ -165,6 +174,13 @@ def parse_official_list(kind: str, text: str, base_url: str) -> list[dict]:
             text,
             flags=re.IGNORECASE | re.DOTALL,
         )
+    elif kind == "rss":
+        matches = re.findall(
+            r'<a[^>]+href=["\x27](/program/papers/\d+/)["\x27][^>]*>'
+            r'\s*<b>(.*?)</b>',
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
     else:
         raise ValueError(f"未知会议来源: {kind}")
 
@@ -200,11 +216,14 @@ def _save_json(path: Path, value: dict) -> None:
 def _official_lists() -> dict[str, list[dict]]:
     cached = _load_json(LIST_CACHE)
     fresh = time.time() - float(cached.get("updated_at") or 0) < CACHE_SECONDS
-    if fresh and cached.get("sources"):
-        return dict(cached["sources"])
-
     source_cache = dict(cached.get("sources") or {})
+    expected = {source["venue"] for source in SOURCES}
+    if fresh and expected <= set(source_cache):
+        return source_cache
+
     for source in SOURCES:
+        if fresh and source["venue"] in source_cache:
+            continue
         try:
             text = _request_text(source["url"])
             source_cache[source["venue"]] = parse_official_list(
@@ -454,6 +473,37 @@ def _detail_paper(item: dict, venue: str) -> dict | None:
         )
         abstract = _clean_html(match.group(1)) if match else ""
         pdf_url = _official_pdf_url(text, official_url)
+    elif venue.startswith("RSS"):
+        match = re.search(
+            r'<h3[^>]+class=["\x27]page-title["\x27][^>]*>\s*<b>(.*?)</b>',
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        title = _clean_html(match.group(1)) if match else title
+        match = re.search(
+            r'<div[^>]+class=["\x27]paper-author-name["\x27][^>]*>(.*?)</div>',
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        authors = [
+            value.strip()
+            for value in re.split(r"[,;]", _clean_html(match.group(1)) if match else "")
+            if value.strip()
+        ]
+        match = re.search(
+            r'<b[^>]*>\s*Abstract:\s*</b>(.*?)</p>',
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        abstract = _clean_html(match.group(1)) if match else ""
+        match = re.search(
+            r'<div[^>]+class=["\x27]paper-pdf["\x27].*?'
+            r'href=["\x27]([^"\x27]+\.pdf)["\x27]',
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        pdf_url = urllib.parse.urljoin(official_url, match.group(1)) if match else ""
+        published = "2026-07-13"
 
     if not abstract or _normalize_title(title) != _normalize_title(item["title"]):
         return None
@@ -714,6 +764,102 @@ def _siggraph_asia_candidates(
     return papers
 
 
+def _corl_candidates(
+    topics: list[str] | None,
+    excluded: set[str],
+    limit: int = 8,
+) -> list[dict]:
+    """Track explicit CoRL 2026 acceptance claims and cross-check the official program."""
+    response = requests.get(
+        "https://export.arxiv.org/api/query",
+        params={
+            "search_query": 'all:"CoRL 2026"',
+            "start": 0,
+            "max_results": 100,
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        },
+        timeout=60,
+        headers={"User-Agent": "HumanGroupBot/1.0"},
+    )
+    response.raise_for_status()
+    try:
+        official_text = _clean_html(_request_text(CORL_OFFICIAL_URL)).casefold()
+    except Exception:
+        official_text = ""
+    keywords = _keywords(topics)
+    ranked = []
+    for entry in feedparser.parse(response.content).entries:
+        title = _clean_html(getattr(entry, "title", ""))
+        normalized = _normalize_title(title)
+        comment = _clean_html(getattr(entry, "arxiv_comment", ""))
+        comment_lower = comment.casefold()
+        accepted = (
+            "corl 2026" in comment_lower
+            and any(marker in comment_lower for marker in ("accepted", "to appear"))
+            and not any(
+                marker in comment_lower
+                for marker in ("submitted", "under review", "planned to submit")
+            )
+        )
+        if not title or normalized in excluded or not accepted:
+            continue
+        abstract = _clean_html(getattr(entry, "summary", ""))
+        searchable = f"{title} {abstract}".casefold()
+        score = sum(
+            max(1, len(keyword.split()))
+            for keyword in keywords
+            if keyword in searchable
+        )
+        if score:
+            ranked.append((score, entry, title, abstract, comment))
+    ranked.sort(key=lambda item: -item[0])
+
+    papers = []
+    for _, entry, title, abstract, comment in ranked:
+        id_match = re.search(r"(\d{4}\.\d{4,5})", str(getattr(entry, "id", "")))
+        if not id_match:
+            continue
+        arxiv_id = id_match.group(1)
+        officially_listed = _normalize_title(title) in _normalize_title(official_text)
+        papers.append(
+            {
+                "id": arxiv_id,
+                "title": title,
+                "authors": [
+                    str(author.get("name") or "").strip()
+                    for author in getattr(entry, "authors", [])
+                    if str(author.get("name") or "").strip()
+                ],
+                "abstract": abstract,
+                "summary": abstract,
+                "paper_url": f"https://arxiv.org/abs/{arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+                "published": str(getattr(entry, "published", "")),
+                "updated": str(getattr(entry, "updated", "")),
+                "categories": [
+                    str(tag.get("term") or "")
+                    for tag in getattr(entry, "tags", [])
+                    if str(tag.get("term") or "")
+                ],
+                "source": (
+                    "CoRL 2026 官方程序 + arXiv"
+                    if officially_listed
+                    else "arXiv 作者录用声明（等待 CoRL 2026 官网标题表复核）"
+                ),
+                "venue": CORL_VENUE,
+                "verified_source": True,
+                "metadata_verified": True,
+                "conference_verified": officially_listed,
+                "venue_claim": comment,
+                "official_venue_url": CORL_OFFICIAL_URL,
+            }
+        )
+        if len(papers) >= limit:
+            break
+    return papers
+
+
 def get_conference_candidates(
     topics: list[str] | None = None,
     *,
@@ -763,10 +909,21 @@ def get_conference_candidates(
         )
         queues[SIGGRAPH_ASIA_VENUE] = []
 
+    try:
+        queues[CORL_VENUE] = _corl_candidates(
+            topics,
+            excluded,
+            limit=max(4, limit),
+        )
+    except Exception as exc:
+        print(f"CoRL 2026 候选读取失败，继续使用其他会议来源: {exc}", flush=True)
+        queues[CORL_VENUE] = []
+
     selected: list[tuple[str, dict]] = []
     venue_order = [source["venue"] for source in SOURCES] + [
         SIGGRAPH_VENUE,
         SIGGRAPH_ASIA_VENUE,
+        CORL_VENUE,
     ]
     while len(selected) < max(1, min(limit, 8)):
         progressed = False
@@ -782,7 +939,7 @@ def get_conference_candidates(
     papers = []
     changed = False
     for venue, item in selected:
-        if venue in {SIGGRAPH_VENUE, SIGGRAPH_ASIA_VENUE}:
+        if venue in {SIGGRAPH_VENUE, SIGGRAPH_ASIA_VENUE, CORL_VENUE}:
             papers.append(item)
             continue
         cache_key = venue + "|" + item["official_url"]

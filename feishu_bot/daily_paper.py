@@ -34,7 +34,8 @@ MAJOR_AI_QUERY = (
     'all:"Google" OR all:"Meta" OR all:"Microsoft" OR all:"NVIDIA" OR '
     'all:"Adobe" OR all:"Apple" OR all:"Amazon" OR all:"ByteDance" OR '
     'all:"Tencent" OR all:"Alibaba" OR all:"Baidu" OR all:"Salesforce") AND '
-    '(cat:cs.AI OR cat:cs.CL OR cat:cs.CV OR cat:cs.LG OR cat:cs.RO OR cat:cs.CR)'
+    '(cat:cs.AI OR cat:cs.CL OR cat:cs.CV OR cat:cs.LG OR cat:cs.RO OR '
+    'cat:cs.CR OR cat:cs.GR OR cat:cs.MM)'
 )
 PANORAMA_MARKERS = (
     "panorama",
@@ -388,7 +389,10 @@ def get_recent_arxiv_candidates(limit=40, topics=None):
         )
         general_papers = _query_arxiv(
             {
-                "search_query": "cat:cs.CV OR cat:cs.AI OR cat:cs.LG OR cat:cs.RO OR cat:cs.GR",
+                "search_query": (
+                    "cat:cs.CV OR cat:cs.AI OR cat:cs.LG OR cat:cs.RO OR "
+                    "cat:cs.GR OR cat:cs.MM"
+                ),
                 "start": 0,
                 "max_results": limit,
                 "sortBy": "submittedDate",
@@ -977,7 +981,36 @@ def daily_push(
     except Exception as exc:
         print(f"Science Robotics 2026 候选获取失败，继续使用其他来源: {exc}", flush=True)
         science_robotics_papers = []
-    papers = science_robotics_papers + tpami_papers + conference_papers + papers
+    try:
+        from priority_journal_source import get_priority_journal_candidates
+
+        priority_journal_papers = track_source(
+            "priority_journals_2026",
+            lambda: get_priority_journal_candidates(
+                topics,
+                exclude_titles=delivered_titles,
+                limit=6,
+            ),
+        )
+        if priority_journal_papers:
+            print(
+                "T-RO / RA-L / ACM TOG 2026 官方候选: "
+                + " | ".join(
+                    f"{paper.get('venue', '')}: {paper.get('title', '')}"
+                    for paper in priority_journal_papers
+                ),
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"优先期刊候选获取失败，继续使用其他来源: {exc}", flush=True)
+        priority_journal_papers = []
+    papers = (
+        priority_journal_papers
+        + science_robotics_papers
+        + tpami_papers
+        + conference_papers
+        + papers
+    )
 
     papers=[
         p for p in papers

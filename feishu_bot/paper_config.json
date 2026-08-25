@@ -21,7 +21,7 @@
     "Spherical Video"
   ],
   "sources": [
-    "arXiv cs.CV/cs.AI/cs.LG/cs.CL/cs.RO/cs.CR",
+    "arXiv cs.CV/cs.AI/cs.LG/cs.CL/cs.RO/cs.CR/cs.GR/cs.MM",
     "HuggingFace Daily Papers",
     "alphaXiv Discover Papers",
     "Major AI labs official research pages and RSS",
@@ -29,6 +29,9 @@
     "CVPR/ECCV/ICML/SIGGRAPH/SIGGRAPH Asia 2026 official proceedings",
     "IEEE TPAMI 2026 official journal records and Early Access",
     "Science Robotics 2026 official journal records",
+    "IEEE T-RO and RA-L 2026 official journal records",
+    "ACM TOG 2026 official journal records",
+    "CoRL and RSS 2026 official or author-verified acceptance records",
     "OpenReview",
     "Semantic Scholar"
   ],

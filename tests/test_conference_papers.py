@@ -1,4 +1,5 @@
 import json
+import time
 
 import daily_paper
 import conference_papers
@@ -33,6 +34,30 @@ def test_active_sources_cover_requested_2026_venues_without_eccv_2024():
     venues = {source["venue"] for source in SOURCES}
     assert {"CVPR 2026", "ECCV 2026", "ICML 2026"} <= venues
     assert "ECCV 2024" not in venues
+
+
+def test_fresh_cache_fetches_newly_configured_source(monkeypatch):
+    existing = {
+        source["venue"]: []
+        for source in SOURCES
+        if source["venue"] != "RSS 2026"
+    }
+    monkeypatch.setattr(
+        conference_papers,
+        "_load_json",
+        lambda path: {"updated_at": time.time(), "sources": existing},
+    )
+    requested = []
+    monkeypatch.setattr(
+        conference_papers,
+        "_request_text",
+        lambda url: requested.append(url) or "",
+    )
+    monkeypatch.setattr(conference_papers, "_save_json", lambda path, value: None)
+
+    conference_papers._official_lists()
+
+    assert requested == [conference_papers.RSS_OFFICIAL_URL]
 
 
 def test_siggraph_asia_requires_explicit_acceptance_claim(monkeypatch):
@@ -103,6 +128,76 @@ def test_parse_icml_excludes_position_papers():
     )
     papers = parse_official_list("icml", html, "https://icml.cc")
     assert [paper["title"] for paper in papers] == ["Video Generation"]
+
+
+def test_parse_rss_official_list_and_detail(monkeypatch):
+    listing = (
+        '<a href="/program/papers/3/">'
+        '<b>DexImit: Learning Bimanual Dexterous Manipulation</b></a>'
+    )
+    papers = parse_official_list(
+        "rss", listing, "https://roboticsconference.org/program/papers/"
+    )
+    assert papers == [
+        {
+            "title": "DexImit: Learning Bimanual Dexterous Manipulation",
+            "official_url": "https://roboticsconference.org/program/papers/3/",
+        }
+    ]
+    detail = """
+    <h3 class="page-title"><b>DexImit: Learning Bimanual Dexterous Manipulation</b></h3>
+    <div class="paper-author-name">Alice Example, Bob Example</div>
+    <div class="paper-pdf"><a href="https://www.roboticsproceedings.org/rss22/p003.pdf">PDF</a></div>
+    <p><b>Abstract: </b>We learn dexterous robot manipulation from human videos.</p>
+    """
+    monkeypatch.setattr(conference_papers, "_request_text", lambda url: detail)
+    paper = conference_papers._detail_paper(papers[0], "RSS 2026")
+    assert paper["conference_verified"] is True
+    assert paper["authors"] == ["Alice Example", "Bob Example"]
+    assert paper["pdf_url"] == "https://www.roboticsproceedings.org/rss22/p003.pdf"
+
+
+def test_corl_requires_explicit_acceptance_claim(monkeypatch):
+    accepted = type(
+        "Entry",
+        (),
+        {
+            "id": "https://arxiv.org/abs/2608.22222v1",
+            "title": "A Humanoid Robot World Model",
+            "summary": "A world model for humanoid control.",
+            "arxiv_comment": "Accepted at CoRL 2026",
+            "published": "2026-08-20T00:00:00Z",
+            "updated": "2026-08-20T00:00:00Z",
+            "authors": [{"name": "A"}],
+            "tags": [{"term": "cs.RO"}],
+        },
+    )()
+    submitted = type(
+        "Entry",
+        (),
+        {
+            "id": "https://arxiv.org/abs/2608.33333v1",
+            "title": "Submitted Robot Paper",
+            "summary": "A robot model.",
+            "arxiv_comment": "Submitted to CoRL 2026",
+            "published": "2026-08-20T00:00:00Z",
+            "updated": "2026-08-20T00:00:00Z",
+            "authors": [{"name": "B"}],
+            "tags": [{"term": "cs.RO"}],
+        },
+    )()
+    response = type("Response", (), {"content": b"feed", "raise_for_status": lambda self: None})()
+    monkeypatch.setattr(conference_papers.requests, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(conference_papers, "_request_text", lambda url: "")
+    monkeypatch.setattr(
+        conference_papers.feedparser,
+        "parse",
+        lambda value: type("Feed", (), {"entries": [accepted, submitted]})(),
+    )
+
+    papers = conference_papers._corl_candidates(["世界模型"], set())
+    assert [paper["id"] for paper in papers] == ["2608.22222"]
+    assert papers[0]["conference_verified"] is False
 
 
 def test_analysis_preserves_verified_conference_metadata(monkeypatch):
