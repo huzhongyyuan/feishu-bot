@@ -285,6 +285,44 @@ def test_unpunctuated_training_pipeline_is_accepted_without_replacing_figure_one
     ]
 
 
+def test_unpunctuated_overview_of_model_is_accepted_as_architecture():
+    figures = [
+        {
+            "number": 1,
+            "page_index": 0,
+            "caption_confidence": 1,
+            "structure_score": 17,
+            "caption": "Figure 1 ForgeWM rollouts under keyboard and gamepad control.",
+        },
+        {
+            "number": 2,
+            "page_index": 2,
+            "caption_confidence": 1,
+            "structure_score": 13,
+            "caption": (
+                "Figure 2 Overview of ForgeWM. Frame-aligned controls condition "
+                "latent chunks. A shared base yields a bidirectional teacher and "
+                "causal students through four-stage training. Deployment separates "
+                "low-latency interaction from replay-time refinement."
+            ),
+        },
+        {
+            "number": 3,
+            "page_index": 6,
+            "caption_confidence": 1,
+            "structure_score": 17,
+            "caption": "Figure 3 Qualitative comparison of rollouts across models.",
+        },
+    ]
+
+    selected = _select_teaser_and_architecture(figures)
+
+    assert [(kind, figure["number"]) for kind, figure in selected] == [
+        ("teaser", 1),
+        ("architecture", 2),
+    ]
+
+
 def test_performance_graph_cannot_fill_architecture_slot():
     figures = [
         {

@@ -696,7 +696,10 @@ def _is_explicit_unpunctuated_architecture(figure: dict) -> bool:
     if not match:
         return False
     opening = match.group(1)
-    explicit = any(keyword in opening for keyword in EXPLICIT_ARCHITECTURE_KEYWORDS)
+    explicit = (
+        any(keyword in opening for keyword in EXPLICIT_ARCHITECTURE_KEYWORDS)
+        or opening.startswith("overview of ")
+    )
     negative = sum(
         weight for keyword, weight in NON_ARCHITECTURE_KEYWORDS.items() if keyword in caption
     )
