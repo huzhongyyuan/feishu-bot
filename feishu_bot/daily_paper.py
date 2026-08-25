@@ -35,7 +35,7 @@ MAJOR_AI_QUERY = (
     'all:"Adobe" OR all:"Apple" OR all:"Amazon" OR all:"ByteDance" OR '
     'all:"Tencent" OR all:"Alibaba" OR all:"Baidu" OR all:"Salesforce") AND '
     '(cat:cs.AI OR cat:cs.CL OR cat:cs.CV OR cat:cs.LG OR cat:cs.RO OR '
-    'cat:cs.CR OR cat:cs.GR OR cat:cs.MM)'
+    'cat:cs.CR OR cat:cs.GR)'
 )
 PANORAMA_MARKERS = (
     "panorama",
@@ -262,7 +262,7 @@ def get_arxiv_daily():
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     papers = []
     errors = []
-    for category in ("cs.CV", "cs.MM", "cs.GR"):
+    for category in ("cs.CV", "cs.GR"):
         try:
             response = requests.get(
                 f"https://rss.arxiv.org/rss/{category}",
@@ -391,7 +391,7 @@ def get_recent_arxiv_candidates(limit=40, topics=None):
             {
                 "search_query": (
                     "cat:cs.CV OR cat:cs.AI OR cat:cs.LG OR cat:cs.RO OR "
-                    "cat:cs.GR OR cat:cs.MM"
+                    "cat:cs.GR"
                 ),
                 "start": 0,
                 "max_results": limit,
@@ -411,7 +411,7 @@ def get_recent_arxiv_candidates(limit=40, topics=None):
                 {
                     "search_query": (
                         f"{PANORAMA_QUERY} AND "
-                        "(cat:cs.CV OR cat:cs.MM OR cat:cs.GR)"
+                        "(cat:cs.CV OR cat:cs.GR)"
                     ),
                     "start": 0,
                     "max_results": min(40, limit),

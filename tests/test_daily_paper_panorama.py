@@ -29,7 +29,8 @@ def test_recent_candidates_issue_targeted_panorama_query(monkeypatch):
     assert len(queries) == 3
     assert any('all:"DeepSeek"' in query for query in queries)
     assert any('all:"omnidirectional camera"' in query for query in queries)
-    assert any("cat:cs.GR" in query and "cat:cs.MM" in query for query in queries)
+    assert any("cat:cs.GR" in query for query in queries)
+    assert all("cat:cs.MM" not in query for query in queries)
     assert {paper["id"] for paper in papers} == {"2608.00001", "2608.00002"}
 
 
