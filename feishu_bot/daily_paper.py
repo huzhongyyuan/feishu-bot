@@ -955,7 +955,29 @@ def daily_push(
     except Exception as exc:
         print(f"TPAMI 2026 候选获取失败，继续使用其他来源: {exc}", flush=True)
         tpami_papers = []
-    papers = tpami_papers + conference_papers + papers
+    try:
+        from science_robotics_source import get_science_robotics_candidates
+
+        science_robotics_papers = track_source(
+            "science_robotics_2026",
+            lambda: get_science_robotics_candidates(
+                topics,
+                exclude_titles=delivered_titles,
+                limit=4,
+            ),
+        )
+        if science_robotics_papers:
+            print(
+                "Science Robotics 2026 官方候选: "
+                + " | ".join(
+                    paper.get("title", "") for paper in science_robotics_papers
+                ),
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"Science Robotics 2026 候选获取失败，继续使用其他来源: {exc}", flush=True)
+        science_robotics_papers = []
+    papers = science_robotics_papers + tpami_papers + conference_papers + papers
 
     papers=[
         p for p in papers
