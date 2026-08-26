@@ -64,6 +64,152 @@ OPEN_SOURCE_FIELDS = (
     "institution_impact_label",
     "institution_impact_evidence",
 )
+
+
+def _candidate_identity(paper: dict) -> str:
+    """Return the same stable identity used while merging candidate sources."""
+    return str(
+        paper.get("id")
+        or paper.get("paper_url")
+        or paper.get("title")
+        or ""
+    ).strip()
+
+
+def _official_venue_fallback_candidates(
+    candidates: list[dict],
+    *,
+    attempted_identities=(),
+    delivered_titles=(),
+) -> list[dict]:
+    """Keep untried, undelivered papers verified by an official venue list."""
+    attempted = {str(value).strip() for value in attempted_identities if value}
+    delivered = {str(value).strip().casefold() for value in delivered_titles if value}
+    result = []
+    seen = set()
+    for paper in candidates:
+        if not (
+            paper.get("conference_verified")
+            or paper.get("journal_verified")
+        ):
+            continue
+        identity = _candidate_identity(paper)
+        title = str(paper.get("title") or "").strip()
+        if (
+            not identity
+            or identity in attempted
+            or identity in seen
+            or not title
+            or title.casefold() in delivered
+        ):
+            continue
+        seen.add(identity)
+        result.append(paper)
+    return result
+
+
+def _verify_candidate_batches(
+    candidates: list[dict],
+    verifier,
+    *,
+    batch_size: int = 16,
+    target_count: int = 1,
+) -> tuple[list[dict], list[dict]]:
+    """Verify fallback candidates in bounded batches until one can be sent."""
+    verified = []
+    attempted = []
+    size = max(1, int(batch_size))
+    target = max(1, int(target_count))
+    for start in range(0, len(candidates), size):
+        batch = candidates[start : start + size]
+        attempted.extend(batch)
+        verified.extend(verifier(batch))
+        if len(verified) >= target:
+            break
+    return verified, attempted
+
+
+def _fetch_expanded_official_candidates(topics, delivered_titles) -> list[dict]:
+    """Read a broader official conference/journal pool for daily fallback."""
+    fetchers = []
+    try:
+        from conference_papers import get_conference_candidates
+
+        fetchers.append(
+            (
+                "会议官方扩展池",
+                lambda: get_conference_candidates(
+                    topics,
+                    exclude_titles=delivered_titles,
+                    limit=8,
+                ),
+            )
+        )
+    except Exception as exc:
+        print(f"会议官方扩展池加载失败: {exc}", flush=True)
+    try:
+        from tpami_source import get_tpami_candidates
+
+        fetchers.append(
+            (
+                "TPAMI 扩展池",
+                lambda: get_tpami_candidates(
+                    topics,
+                    exclude_titles=delivered_titles,
+                    limit=10,
+                ),
+            )
+        )
+    except Exception as exc:
+        print(f"TPAMI 扩展池加载失败: {exc}", flush=True)
+    try:
+        from science_robotics_source import get_science_robotics_candidates
+
+        fetchers.append(
+            (
+                "Science Robotics 扩展池",
+                lambda: get_science_robotics_candidates(
+                    topics,
+                    exclude_titles=delivered_titles,
+                    limit=10,
+                ),
+            )
+        )
+    except Exception as exc:
+        print(f"Science Robotics 扩展池加载失败: {exc}", flush=True)
+    try:
+        from priority_journal_source import get_priority_journal_candidates
+
+        fetchers.append(
+            (
+                "T-RO / RA-L / TOG 扩展池",
+                lambda: get_priority_journal_candidates(
+                    topics,
+                    exclude_titles=delivered_titles,
+                    limit=10,
+                ),
+            )
+        )
+    except Exception as exc:
+        print(f"优先期刊扩展池加载失败: {exc}", flush=True)
+
+    papers = []
+    seen = set()
+    for label, fetch in fetchers:
+        try:
+            values = fetch()
+            print(f"{label}: {len(values)}", flush=True)
+        except Exception as exc:
+            print(f"{label}获取失败，继续尝试其他官方列表: {exc}", flush=True)
+            continue
+        for paper in values:
+            identity = _candidate_identity(paper)
+            if identity and identity not in seen:
+                seen.add(identity)
+                papers.append(paper)
+    return papers
+
+
 def get_official_tech_reports() -> list[dict]:
     """Return reports verified through generic first-party cross-links."""
     from official_report_source import discover_official_reports
@@ -1075,8 +1221,49 @@ def daily_push(
     )
     print("三层核验后的开源大团队候选:", len(papers), flush=True)
     if not papers:
+        print(
+            "最新论文无合格候选，切换官方会议/期刊兜底池",
+            flush=True,
+        )
+        expanded_official = _fetch_expanded_official_candidates(
+            topics,
+            delivered_titles,
+        )
+        store_candidates(expanded_official)
+        attempted_identities = {
+            _candidate_identity(paper) for paper in verification_batch
+        }
+        fallback_candidates = _official_venue_fallback_candidates(
+            expanded_official,
+            attempted_identities=attempted_identities,
+            delivered_titles=delivered_titles,
+        )
+        papers, fallback_attempted = _verify_candidate_batches(
+            fallback_candidates,
+            filter_open_source_large_team,
+            batch_size=16,
+            target_count=max_papers,
+        )
+        fallback_verified_identities = {
+            _candidate_identity(paper) for paper in papers
+        }
+        mark_candidates(papers, "verified")
+        mark_candidates(
+            [
+                paper for paper in fallback_attempted
+                if _candidate_identity(paper) not in fallback_verified_identities
+            ],
+            "deferred",
+            "official fallback open-source or team verification did not pass",
+        )
+        print(
+            "官方会议/期刊兜底核验后的开源大团队候选:",
+            len(papers),
+            flush=True,
+        )
+    if not papers:
         raise RuntimeError(
-            "本时段没有同时通过 LLM、仓库 API 与 README 核验的开源大团队论文"
+            "最新论文及官方会议/期刊列表均无同时通过 LLM、仓库 API 与 README 核验的未推送论文"
         )
 
     # 对已经通过开源核验的少量候选读取官方 PDF 首页机构，避免仅凭作者人数
