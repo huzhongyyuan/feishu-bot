@@ -353,6 +353,38 @@ def test_performance_graph_cannot_fill_architecture_slot():
     assert _select_teaser_and_architecture(figures) == []
 
 
+def test_dataset_construction_pipeline_can_fill_architecture_slot():
+    figures = [
+        {
+            "number": 1,
+            "page_index": 0,
+            "caption_confidence": 2,
+            "caption": "Figure 1: Overview of HiPHI, a high-fidelity motion dataset.",
+            "structure_score": 0,
+            "method_reference_score": 0,
+        },
+        {
+            "number": 2,
+            "page_index": 2,
+            "caption_confidence": 2,
+            "caption": (
+                "Figure 2: From FrameNet to HiPHI data construction. "
+                "Motion-relevant frames and lexical units define motion seeds, "
+                "which are expanded through controlled factors."
+            ),
+            "structure_score": 0,
+            "method_reference_score": 2,
+        },
+    ]
+
+    selected = _select_teaser_and_architecture(figures)
+
+    assert [(kind, figure["number"]) for kind, figure in selected] == [
+        ("teaser", 1),
+        ("architecture", 2),
+    ]
+
+
 def test_pipe_delimited_security_paper_uses_workflow_teaser_and_runtime_adapter():
     figures = [
         {

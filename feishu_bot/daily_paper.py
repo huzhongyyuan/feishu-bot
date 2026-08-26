@@ -24,6 +24,11 @@ load_dotenv()
 LIBRARY = "paper_library.json"
 RECENT_LOOKBACK_DAYS = 30
 ARXIV_RETRY_SECONDS = 2 * 60
+HF_DAILY_URLS = (
+    "https://huggingface.co/api/daily_papers",
+    "https://hf-mirror.com/api/daily_papers",
+)
+HF_DAILY_HOT_LIMIT = 20
 PANORAMA_QUERY = (
     '(all:"panoramic camera" OR all:"omnidirectional camera" OR '
     'all:"360-degree video" OR all:"360 video" OR all:"spherical video" OR '
@@ -285,47 +290,85 @@ def save_library(papers):
 
 
 
-def get_hf_daily():
-
-    url = "https://hf-mirror.com/api/daily_papers"
-
+def _safe_int(value) -> int:
     try:
-        # Direct access is the safe default on the long-running server.
-        # A proxy remains opt-in through HF_PROXY_URL when a deployment needs it.
-        proxy_url = os.getenv("HF_PROXY_URL", "").strip()
-        proxies = (
-            {"http": proxy_url, "https": proxy_url}
-            if proxy_url
-            else None
-        )
-        r = requests.get(
-            url,
-            timeout=20,
-            headers={
-                "User-Agent":"Mozilla/5.0"
-            },
-            proxies=proxies,
-        )
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
-        r.raise_for_status()
 
-        papers=[]
+def _rank_hf_daily_items(payload, limit=HF_DAILY_HOT_LIMIT):
+    """Keep the newest HF Daily issue and rank it by community attention."""
+    items = [item for item in payload if isinstance(item, dict) and item.get("paper")]
+    dates = [
+        str(item["paper"].get("submittedOnDailyAt") or "")[:10]
+        for item in items
+        if item["paper"].get("submittedOnDailyAt")
+    ]
+    if dates:
+        newest_date = max(dates)
+        items = [
+            item for item in items
+            if str(item["paper"].get("submittedOnDailyAt") or "")[:10]
+            == newest_date
+        ]
+    items.sort(
+        key=lambda item: (
+            _safe_int(item["paper"].get("upvotes")),
+            _safe_int(item.get("numComments")),
+            bool(item["paper"].get("githubRepo")),
+        ),
+        reverse=True,
+    )
+    return items[: max(1, int(limit))]
 
-        for item in r.json()[:10]:
 
-            paper=item.get("paper",{})
-            arxiv_id = str(paper.get("id") or "").strip()
-            if not re.fullmatch(r"\d{4}\.\d{4,5}", arxiv_id):
-                continue
-            github_repo = paper.get("githubRepo") or ""
-            if isinstance(github_repo, dict):
-                github_repo = github_repo.get("url") or github_repo.get("name") or ""
-            papers.append({
+def get_hf_daily():
+    # Prefer the official API. Keep hf-mirror.com as a resilience fallback,
+    # because connectivity differs across long-running deployment networks.
+    proxy_url = os.getenv("HF_PROXY_URL", "").strip()
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    payload = None
+    selected_url = ""
+    errors = []
+    for url in HF_DAILY_URLS:
+        try:
+            response = requests.get(
+                url,
+                timeout=20,
+                headers={"User-Agent": "Mozilla/5.0 HumanGroupBot/1.0"},
+                proxies=proxies,
+            )
+            response.raise_for_status()
+            value = response.json()
+            if not isinstance(value, list) or not value:
+                raise RuntimeError("empty or invalid Daily Papers response")
+            payload = value
+            selected_url = url
+            break
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+
+    if payload is None:
+        print("HF Daily Papers 失败: " + " | ".join(errors), flush=True)
+        return []
+
+    papers = []
+    for rank, item in enumerate(_rank_hf_daily_items(payload), start=1):
+        paper = item.get("paper", {})
+        arxiv_id = str(paper.get("id") or "").strip()
+        if not re.fullmatch(r"\d{4}\.\d{4,5}", arxiv_id):
+            continue
+        github_repo = paper.get("githubRepo") or ""
+        if isinstance(github_repo, dict):
+            github_repo = github_repo.get("url") or github_repo.get("name") or ""
+        papers.append(
+            {
                 "id": arxiv_id,
                 "title": paper.get("title", ""),
                 "summary": paper.get("summary", ""),
-                "hf_upvotes": int(paper.get("upvotes") or 0),
-                "hf_comments": int(item.get("numComments") or 0),
+                "hf_upvotes": _safe_int(paper.get("upvotes")),
+                "hf_comments": _safe_int(item.get("numComments")),
                 "hf_organization": (
                     (item.get("organization") or {}).get("fullname")
                     or (paper.get("organization") or {}).get("fullname")
@@ -334,26 +377,48 @@ def get_hf_daily():
                 "hf_project_url": str(paper.get("projectPage") or ""),
                 "hf_github_url": str(github_repo or ""),
                 "hf_thumbnail": str(item.get("thumbnail") or ""),
+                "hf_daily_date": str(
+                    paper.get("submittedOnDailyAt") or item.get("publishedAt") or ""
+                )[:10],
+                "hf_daily_rank": rank,
+                "hf_daily_hot": True,
                 "source": "Hugging Face Daily Papers",
-            })
-
-        print(
-            "HF获取成功:",
-            len(papers),
-            flush=True
+            }
         )
 
-        return papers
+    print(
+        f"HF Daily Papers 热门获取成功: {len(papers)}（{selected_url}）",
+        flush=True,
+    )
+    return papers
 
-    except Exception as e:
 
-        print(
-            "HF失败:",
-            e,
-            flush=True
-        )
-
-        return []
+def _priority_verification_candidates(
+    papers: list[dict],
+    *,
+    limit: int = 24,
+    hf_reserve: int = 8,
+) -> list[dict]:
+    """Reserve daily verification capacity for HF community-hot papers."""
+    hot = sorted(
+        [paper for paper in papers if paper.get("hf_daily_hot")],
+        key=lambda paper: (
+            _safe_int(paper.get("hf_upvotes")),
+            _safe_int(paper.get("hf_comments")),
+        ),
+        reverse=True,
+    )[: max(0, min(int(hf_reserve), int(limit)))]
+    selected = list(hot)
+    identities = {_candidate_identity(paper) for paper in selected}
+    for paper in papers:
+        identity = _candidate_identity(paper)
+        if not identity or identity in identities:
+            continue
+        identities.add(identity)
+        selected.append(paper)
+        if len(selected) >= int(limit):
+            break
+    return selected
 
 
 
@@ -1203,7 +1268,7 @@ def daily_push(
     # 再用 GitHub/GitLab API 和 README 做确定性复核；任何一层不通过都不推荐。
     from paper_opensource import filter_open_source_large_team
 
-    verification_batch = papers[:24]
+    verification_batch = _priority_verification_candidates(papers, limit=24)
     papers = filter_open_source_large_team(verification_batch)
     verified_identities = {
         paper.get("id") or paper.get("paper_url") or paper.get("title", "")

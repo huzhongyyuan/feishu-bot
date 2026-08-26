@@ -45,6 +45,10 @@ ARCHITECTURE_KEYWORDS = {
     "attention": 4,
     "adapter": 10,
     "lifecycle": 10,
+    "data construction": 16,
+    "dataset construction": 16,
+    "data collection pipeline": 14,
+    "benchmark pipeline": 14,
 }
 NON_ARCHITECTURE_KEYWORDS = {
     "qualitative": 12,
@@ -81,6 +85,10 @@ STRONG_ARCHITECTURE_KEYWORDS = {
     "correspondence",
     "adapter",
     "lifecycle",
+    "data construction",
+    "dataset construction",
+    "data collection pipeline",
+    "benchmark pipeline",
 }
 MIN_ARCHITECTURE_SCORE = 8
 EXPLICIT_ARCHITECTURE_KEYWORDS = {
@@ -97,6 +105,10 @@ EXPLICIT_ARCHITECTURE_KEYWORDS = {
     "assessment workflow",
     "component lifecycle",
     "lifecycle with transitions",
+    "data construction",
+    "dataset construction",
+    "data collection pipeline",
+    "benchmark pipeline",
 }
 METHOD_CONTEXT_KEYWORDS = {
     "architecture",
@@ -626,6 +638,10 @@ def _is_primary_architecture_caption(figure: dict) -> bool:
             "runtime adapter",
             "source-to-sink path",
             "lifecycle with transitions",
+            "data construction",
+            "dataset construction",
+            "data collection pipeline",
+            "benchmark pipeline",
         )
     )
 
